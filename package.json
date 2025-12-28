@@ -1,0 +1,28 @@
+{
+  "name": "telegram-youtube-downloader-bot",
+  "version": "1.0.0",
+  "description": "A powerful Telegram bot for downloading YouTube videos and audio",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "keywords": [
+    "telegram",
+    "youtube",
+    "downloader",
+    "yt-dlp",
+    "bot"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "dependencies": {
+    "node-telegram-bot-api": "^0.64.0",
+    "dotenv": "^16.3.1",
+    "fluent-ffmpeg": "^2.1.2",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
