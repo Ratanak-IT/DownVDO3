@@ -1,37 +1,33 @@
-# ── Base image ─────────────────────────────
+# ── Base ───────────────────────────────────────────────────────────────────────
 FROM node:20-slim
 
-# Install dependencies
+# ── Install system dependencies ────────────────────────────────────────────────
+# ffmpeg        — audio/video processing
+# python3 + pip — required to install yt-dlp
+# curl          — needed by Railway health checks
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     python3 \
-    python3-venv \
     python3-pip \
     curl \
-    ca-certificates \
+    --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
-# Create virtual environment and install yt-dlp
-RUN python3 -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+# ── Install yt-dlp ─────────────────────────────────────────────────────────────
+RUN pip3 install --break-system-packages --upgrade yt-dlp
 
-RUN pip install --upgrade pip yt-dlp
-
-# Verify installations
-RUN yt-dlp --version && ffmpeg -version | head -1
-
-# Working directory
+# ── Set working directory ──────────────────────────────────────────────────────
 WORKDIR /app
 
-# Install Node dependencies
+# ── Install Node dependencies ──────────────────────────────────────────────────
 COPY package*.json ./
-RUN npm install --production
+RUN npm ci --omit=dev
 
-# Copy source code
+# ── Copy source code ───────────────────────────────────────────────────────────
 COPY . .
 
-# Create downloads folder
-RUN mkdir -p downloads
+# ── Create required directories ────────────────────────────────────────────────
+RUN mkdir -p downloads data
 
-# Start bot
+# ── Start bot ─────────────────────────────────────────────────────────────────
 CMD ["node", "index.js"]
