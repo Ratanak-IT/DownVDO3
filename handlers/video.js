@@ -1,5 +1,5 @@
 /**
- * 🎬 Video Handler
+ * 🎬 Video Handler — YouTube + TikTok
  */
 
 const fs       = require('fs');
@@ -8,7 +8,7 @@ const cleanup  = require('../services/cleanup');
 const buttons  = require('../utils/buttons');
 const progress = require('../utils/progress');
 const { getUserLang, t } = require('../utils/lang');
-const admin = require('./admin');
+const admin    = require('./admin');
 const messages = require('../utils/messages');
 
 async function initiateVideoDownload(bot, chatId, userStates) {
@@ -25,12 +25,17 @@ async function processVideoUrl(bot, msg, userStates) {
     const url    = msg.text.trim();
     const lang   = getUserLang(msg.from.id);
 
-    if (!ytdlp.isValidYouTubeUrl(url)) {
+    // Auto-detect platform
+    const platform = ytdlp.detectPlatform(url);
+
+    if (!platform) {
         await bot.sendMessage(chatId, t('invalid_url', lang), { parse_mode: 'HTML' });
         return;
     }
 
-    const fetchingMsg = await bot.sendMessage(chatId, t('fetching_video', lang), { parse_mode: 'HTML' });
+    const fetchingMsg = await bot.sendMessage(chatId, t('fetching_video', lang), {
+        parse_mode: 'HTML'
+    });
 
     try {
         const videoInfo = await ytdlp.getVideoInfo(url);
@@ -38,29 +43,33 @@ async function processVideoUrl(bot, msg, userStates) {
 
         userStates.set(chatId, { action: 'awaiting_video_quality', videoInfo, url });
 
-        const caption = messages.getVideoInfo(videoInfo) + `\n\n${t('select_video_quality', lang)}`;
-        await bot.sendPhoto(chatId, videoInfo.thumbnail, {
-            caption,
-            parse_mode: 'HTML',
-            reply_markup: { inline_keyboard: buttons.getVideoQualityButtons(videoInfo.formats, lang) }
-        });
+        const platformLabel = platform === 'tiktok' ? '🎵 TikTok' : '🎬 YouTube';
+        const caption = `${platformLabel}\n\n` + messages.getVideoInfo(videoInfo) + `\n\n${t('select_video_quality', lang)}`;
+
+        if (videoInfo.thumbnail) {
+            await bot.sendPhoto(chatId, videoInfo.thumbnail, {
+                caption,
+                parse_mode: 'HTML',
+                reply_markup: { inline_keyboard: buttons.getVideoQualityButtons(videoInfo.formats, lang) }
+            });
+        } else {
+            await bot.sendMessage(chatId, caption, {
+                parse_mode: 'HTML',
+                reply_markup: { inline_keyboard: buttons.getVideoQualityButtons(videoInfo.formats, lang) }
+            });
+        }
     } catch (error) {
         console.error('Video info error:', error);
 
-        // Show detailed error so user knows what went wrong
         let errMsg = '';
-        if (error.message && error.message.includes('yt-dlp')) {
-            errMsg = lang === 'km'
-                ? '❌ yt-dlp មិនដំណើរការ។ សូម contact admin។'
-                : '❌ yt-dlp not working. Please contact admin.';
-        } else if (error.message && error.message.includes('Private')) {
+        if (error.message && error.message.includes('Private')) {
             errMsg = lang === 'km'
                 ? '❌ វីដេអូនេះ Private មិនអាចទាញយកបានទេ។'
                 : '❌ This video is Private and cannot be downloaded.';
         } else if (error.message && error.message.includes('age')) {
             errMsg = lang === 'km'
-                ? '❌ វីដេអូនេះត្រូវការ login។ សូម contact admin ដើម្បីដំឡើង cookies។'
-                : '❌ This video requires login. Contact admin to set up cookies.';
+                ? '❌ វីដេអូនេះត្រូវការ login។ សូម contact admin។'
+                : '❌ This video requires login. Contact admin.';
         } else {
             errMsg = lang === 'km'
                 ? `❌ Error: ${error.message || 'មិនអាចទាញព័ត៌មានបានទេ'}`
@@ -80,40 +89,45 @@ async function handleQualitySelection(bot, query, userStates) {
     const lang    = getUserLang(userId);
 
     if (!state || !state.url) {
-        await bot.sendMessage(chatId, t('session_expired', lang)); return;
+        await bot.sendMessage(chatId, t('session_expired', lang));
+        return;
     }
 
-    const progressMsg = await bot.sendMessage(chatId, t('downloading_video', lang), { parse_mode: 'HTML' });
+    const progressMsg = await bot.sendMessage(chatId, t('downloading_video', lang), {
+        parse_mode: 'HTML'
+    });
 
     try {
         const filePath = await ytdlp.downloadVideo(state.url, quality, chatId);
-        await progress.safeEditMessage(bot, chatId, progressMsg.message_id, t('processing', lang));
-        await sleep(500);
+
         await progress.safeEditMessage(bot, chatId, progressMsg.message_id, t('uploading', lang));
 
         if (!fs.existsSync(filePath)) throw new Error('Downloaded file not found on disk');
 
-        // Check file size — Telegram limit is 50MB
-        const stats   = fs.statSync(filePath);
-        const sizeMB  = stats.size / (1024 * 1024);
+        const stats  = fs.statSync(filePath);
+        const sizeMB = stats.size / (1024 * 1024);
 
         if (sizeMB > 49) {
             fs.unlinkSync(filePath);
             const sizeMsg = lang === 'km'
-                ? `❌ ឯកសារធំពេក (${sizeMB.toFixed(1)}MB)។ Telegram អនុញ្ញាតតែ 50MB។ សូមជ្រើស quality ទាប (360p ឬ 480p)។`
-                : `❌ File too large (${sizeMB.toFixed(1)}MB). Telegram allows max 50MB. Please choose lower quality (360p or 480p).`;
+                ? `❌ ឯកសារធំពេក (${sizeMB.toFixed(1)}MB)។ Telegram អនុញ្ញាតតែ 50MB។ សូមជ្រើស quality ទាប។`
+                : `❌ File too large (${sizeMB.toFixed(1)}MB). Max 50MB. Please choose lower quality.`;
             await progress.safeEditMessage(bot, chatId, progressMsg.message_id, sizeMsg);
             userStates.delete(chatId);
             return;
         }
 
+        const platform = ytdlp.detectPlatform(state.url);
+        const icon     = platform === 'tiktok' ? '🎵' : '🎬';
+
         await bot.sendDocument(chatId, filePath, {
-            caption: `🎬 ${state.videoInfo.title}\n\n📊 Quality: ${quality} | 📦 Size: ${sizeMB.toFixed(1)}MB`,
+            caption: `${icon} ${state.videoInfo.title}\n\n📊 Quality: ${quality} | 📦 Size: ${sizeMB.toFixed(1)}MB`,
             parse_mode: 'HTML'
         });
 
         await progress.safeDeleteMessage(bot, chatId, progressMsg.message_id);
         await bot.sendMessage(chatId, t('download_success', lang), { parse_mode: 'HTML' });
+
         admin.incVideo();
         admin.incrementUserDownload(userId);
         cleanup.scheduleDelete(filePath);
@@ -125,27 +139,14 @@ async function handleQualitySelection(bot, query, userStates) {
     } catch (error) {
         console.error('Video download error:', error);
 
-        let errMsg = '';
-        if (error.message && error.message.includes('50')) {
-            errMsg = lang === 'km'
-                ? '❌ ឯកសារធំពេក។ សូមជ្រើស quality ទាប (360p ឬ 480p)។'
-                : '❌ File too large. Please choose lower quality (360p or 480p).';
-        } else if (error.message && error.message.includes('yt-dlp')) {
-            errMsg = lang === 'km'
-                ? '❌ yt-dlp error។ សូម contact admin។'
-                : '❌ yt-dlp error. Please contact admin.';
-        } else {
-            errMsg = lang === 'km'
-                ? `❌ Download បរាជ័យ: ${error.message || 'Unknown error'}`
-                : `❌ Download failed: ${error.message || 'Unknown error'}`;
-        }
+        const errMsg = lang === 'km'
+            ? `❌ Download បរាជ័យ: ${error.message || 'Unknown error'}`
+            : `❌ Download failed: ${error.message || 'Unknown error'}`;
 
         await progress.safeEditMessage(bot, chatId, progressMsg.message_id, errMsg);
         admin.incFailed();
         userStates.delete(chatId);
     }
 }
-
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 module.exports = { initiateVideoDownload, processVideoUrl, handleQualitySelection };

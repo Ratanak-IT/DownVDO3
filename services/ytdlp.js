@@ -1,6 +1,6 @@
 /**
  * 🔧 yt-dlp Service
- * Handles all YouTube download operations
+ * Handles YouTube + TikTok download operations
  */
 
 const { spawnSync, spawn } = require('child_process');
@@ -30,8 +30,9 @@ const YT_DLP_BIN = getYtDlpBin();
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-function getCookieArgs() {
-    if (fs.existsSync(config.COOKIE_PATH)) {
+function getCookieArgs(platform = 'youtube') {
+    // Only use cookies for YouTube — TikTok doesn't need them
+    if (platform === 'youtube' && fs.existsSync(config.COOKIE_PATH)) {
         return ['--cookies', config.COOKIE_PATH];
     }
     return [];
@@ -43,9 +44,9 @@ function ensureDownloadsDir() {
     }
 }
 
-function runYtDlp(args) {
+function runYtDlp(args, platform = 'youtube') {
     return new Promise((resolve, reject) => {
-        const fullArgs = [...args, ...getCookieArgs()];
+        const fullArgs = [...args, ...getCookieArgs(platform)];
         console.log('▶ yt-dlp', fullArgs.join(' '));
 
         const proc = spawn(YT_DLP_BIN, fullArgs);
@@ -69,7 +70,7 @@ function runYtDlp(args) {
     });
 }
 
-// ── URL validation ─────────────────────────────────────────────────────────────
+// ── URL detection ──────────────────────────────────────────────────────────────
 
 function isValidYouTubeUrl(url) {
     const patterns = [
@@ -82,6 +83,27 @@ function isValidYouTubeUrl(url) {
     return patterns.some(p => p.test(url));
 }
 
+function isValidTikTokUrl(url) {
+    const patterns = [
+        /^(https?:\/\/)?(www\.)?tiktok\.com\/@[\w.-]+\/video\/\d+/,
+        /^(https?:\/\/)?vm\.tiktok\.com\/[\w]+/,
+        /^(https?:\/\/)?vt\.tiktok\.com\/[\w]+/,
+        /^(https?:\/\/)?m\.tiktok\.com\/v\/\d+/,
+    ];
+    return patterns.some(p => p.test(url));
+}
+
+/**
+ * Detect platform from URL
+ * @param {string} url
+ * @returns {'youtube'|'tiktok'|null}
+ */
+function detectPlatform(url) {
+    if (isValidYouTubeUrl(url)) return 'youtube';
+    if (isValidTikTokUrl(url)) return 'tiktok';
+    return null;
+}
+
 function extractVideoId(url) {
     const match = url.match(
         /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/
@@ -92,12 +114,14 @@ function extractVideoId(url) {
 // ── Core functions ─────────────────────────────────────────────────────────────
 
 async function getVideoInfo(url) {
+    const platform = detectPlatform(url);
+
     const stdout = await runYtDlp([
         '--dump-json',
         '--no-warnings',
         '--no-playlist',
         url,
-    ]);
+    ], platform);
 
     const info = JSON.parse(stdout);
     const formats    = [];
@@ -123,31 +147,43 @@ async function getVideoInfo(url) {
         title:     info.title      || 'Unknown Title',
         duration:  info.duration   || 0,
         thumbnail: info.thumbnail  || '',
-        uploader:  info.uploader   || 'Unknown',
+        uploader:  info.uploader   || info.creator || 'Unknown',
         viewCount: info.view_count || 0,
         formats,
         videoId:   info.id,
+        platform,
     };
 }
 
 async function downloadVideo(url, quality, chatId) {
     ensureDownloadsDir();
 
+    const platform   = detectPlatform(url);
     const uid        = uuidv4();
     const outputPath = path.join(config.DOWNLOAD_PATH, `video_${chatId}_${uid}.mp4`);
     const height     = parseInt(quality.replace('p', ''));
 
-    // Do NOT use -f with height filters — YouTube restricts formats on server IPs.
-    // Instead use --format-sort to prefer the requested height and let yt-dlp
-    // automatically pick the best actually-available format.
-    await runYtDlp([
-        '--format-sort', `res:${height},ext:mp4:m4a,+size`,
-        '--merge-output-format', 'mp4',
-        '-o', outputPath,
-        '--no-warnings',
-        '--no-playlist',
-        url,
-    ]);
+    if (platform === 'tiktok') {
+        // TikTok: no format restrictions needed, just get best quality
+        await runYtDlp([
+            '--format-sort', `res:${height},ext:mp4`,
+            '--merge-output-format', 'mp4',
+            '-o', outputPath,
+            '--no-warnings',
+            '--no-playlist',
+            url,
+        ], 'tiktok');
+    } else {
+        // YouTube: use format-sort without -f to avoid "format not available"
+        await runYtDlp([
+            '--format-sort', `res:${height},ext:mp4:m4a,+size`,
+            '--merge-output-format', 'mp4',
+            '-o', outputPath,
+            '--no-warnings',
+            '--no-playlist',
+            url,
+        ], 'youtube');
+    }
 
     const files = fs.readdirSync(config.DOWNLOAD_PATH);
     const match = files.find(f => f.startsWith(`video_${chatId}_${uid}`));
@@ -159,6 +195,7 @@ async function downloadVideo(url, quality, chatId) {
 async function downloadAudio(url, bitrate, chatId) {
     ensureDownloadsDir();
 
+    const platform       = detectPlatform(url);
     const uid            = uuidv4();
     const outputTemplate = path.join(config.DOWNLOAD_PATH, `audio_${chatId}_${uid}.%(ext)s`);
 
@@ -171,7 +208,7 @@ async function downloadAudio(url, bitrate, chatId) {
         '--no-playlist',
         '-o', outputTemplate,
         url,
-    ]);
+    ], platform);
 
     const files = fs.readdirSync(config.DOWNLOAD_PATH);
     const match = files.find(f => f.startsWith(`audio_${chatId}_${uid}`));
@@ -185,7 +222,7 @@ async function searchYouTube(query, limit = 10) {
         '--dump-json',
         '--flat-playlist',
         '--no-warnings',
-    ]);
+    ], 'youtube');
 
     const results = [];
     const lines   = stdout.trim().split('\n');
@@ -209,6 +246,8 @@ async function searchYouTube(query, limit = 10) {
 
 module.exports = {
     isValidYouTubeUrl,
+    isValidTikTokUrl,
+    detectPlatform,
     extractVideoId,
     getVideoInfo,
     downloadVideo,
