@@ -128,68 +128,6 @@ async function processTikTokMp3Url(bot, msg, userStates) {
     }
 }
 
-// ── Step 4a: Handle TikTok Video Quality ──────────────────────────────────────
-
-async function handleTikTokVideoQuality(bot, query, userStates) {
-    const chatId  = query.message.chat.id;
-    const userId  = query.from.id;
-    const quality = query.data.replace('tvq_', '');
-    const state   = userStates.get(chatId);
-    const lang    = getUserLang(userId);
-
-    if (!state || !state.url) {
-        await bot.sendMessage(chatId, t('session_expired', lang)); return;
-    }
-
-    const progressMsg = await bot.sendMessage(chatId, t('downloading_video', lang), { parse_mode: 'HTML' });
-
-    try {
-        const filePath = await ytdlp.downloadVideo(state.url, quality, chatId);
-        await progress.safeEditMessage(bot, chatId, progressMsg.message_id, t('uploading', lang));
-
-        if (!fs.existsSync(filePath)) throw new Error('File not found on disk');
-
-        const stats  = fs.statSync(filePath);
-        const sizeMB = stats.size / (1024 * 1024);
-
-        if (sizeMB > 49) {
-            fs.unlinkSync(filePath);
-            await progress.safeEditMessage(bot, chatId, progressMsg.message_id,
-                lang === 'km'
-                    ? `❌ ឯកសារធំពេក (${sizeMB.toFixed(1)}MB)។ Telegram អនុញ្ញាតតែ 50MB។`
-                    : `❌ File too large (${sizeMB.toFixed(1)}MB). Max 50MB.`
-            );
-            userStates.delete(chatId); return;
-        }
-
-        await bot.sendDocument(chatId, filePath, {
-            caption: `🎵 TikTok: ${state.videoInfo.title}\n\n📊 Quality: ${quality} | 📦 Size: ${sizeMB.toFixed(1)}MB\n🚫 No Watermark`,
-            parse_mode: 'HTML'
-        });
-
-        await progress.safeDeleteMessage(bot, chatId, progressMsg.message_id);
-        await bot.sendMessage(chatId, t('download_success', lang), { parse_mode: 'HTML' });
-
-        admin.incVideo();
-        admin.incrementUserDownload(userId);
-        cleanup.scheduleDelete(filePath);
-        userStates.delete(chatId);
-
-        const menuHandler = require('./menu');
-        await menuHandler.showMainMenu(bot, chatId, userId);
-
-    } catch (error) {
-        console.error('TikTok video download error:', error);
-        await progress.safeEditMessage(bot, chatId, progressMsg.message_id,
-            lang === 'km'
-                ? `❌ Download បរាជ័យ: ${error.message || 'Unknown error'}`
-                : `❌ Download failed: ${error.message || 'Unknown error'}`
-        );
-        admin.incFailed();
-        userStates.delete(chatId);
-    }
-}
-
 // ── Step 4b: Handle TikTok MP3 Quality ────────────────────────────────────────
 
 async function handleTikTokMp3Quality(bot, query, userStates) {
@@ -270,6 +208,5 @@ module.exports = {
     askTikTokUrl,
     processTikTokVideoUrl,
     processTikTokMp3Url,
-    handleTikTokVideoQuality,
     handleTikTokMp3Quality,
 };

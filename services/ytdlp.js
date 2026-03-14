@@ -207,6 +207,30 @@ async function downloadVideo(url, quality, chatId) {
     throw new Error('Downloaded video file not found on disk');
 }
 
+async function downloadTikTokVideo(url, chatId) {
+    ensureDownloadsDir();
+
+    const uid        = uuidv4();
+    const outputPath = path.join(config.DOWNLOAD_PATH, `video_${chatId}_${uid}.mp4`);
+
+    // Best quality, no watermark (h264 has no watermark on TikTok)
+    await runYtDlp([
+        '--format-sort', 'ext:mp4,+codec:h264,+res',
+        '--merge-output-format', 'mp4',
+        '-o', outputPath,
+        '--no-warnings',
+        '--no-playlist',
+        '--no-check-certificates',
+        url,
+    ], 'tiktok');
+
+    const files = fs.readdirSync(config.DOWNLOAD_PATH);
+    const match = files.find(f => f.startsWith(`video_${chatId}_${uid}`));
+    if (match) return path.join(config.DOWNLOAD_PATH, match);
+    if (fs.existsSync(outputPath)) return outputPath;
+    throw new Error('Downloaded TikTok video file not found on disk');
+}
+
 async function downloadAudio(url, bitrate, chatId) {
     ensureDownloadsDir();
 
@@ -266,6 +290,7 @@ module.exports = {
     extractVideoId,
     getVideoInfo,
     downloadVideo,
+    downloadTikTokVideo,
     downloadAudio,
     searchYouTube,
 };
