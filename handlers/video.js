@@ -45,7 +45,28 @@ async function processVideoUrl(bot, msg, userStates) {
         });
     } catch (error) {
         console.error('Video info error:', error);
-        await progress.safeEditMessage(bot, chatId, fetchingMsg.message_id, t('error_generic', lang));
+
+        // Show detailed error so user knows what went wrong
+        let errMsg = '';
+        if (error.message && error.message.includes('yt-dlp')) {
+            errMsg = lang === 'km'
+                ? '❌ yt-dlp មិនដំណើរការ។ សូម contact admin។'
+                : '❌ yt-dlp not working. Please contact admin.';
+        } else if (error.message && error.message.includes('Private')) {
+            errMsg = lang === 'km'
+                ? '❌ វីដេអូនេះ Private មិនអាចទាញយកបានទេ។'
+                : '❌ This video is Private and cannot be downloaded.';
+        } else if (error.message && error.message.includes('age')) {
+            errMsg = lang === 'km'
+                ? '❌ វីដេអូនេះត្រូវការ login។ សូម contact admin ដើម្បីដំឡើង cookies។'
+                : '❌ This video requires login. Contact admin to set up cookies.';
+        } else {
+            errMsg = lang === 'km'
+                ? `❌ Error: ${error.message || 'មិនអាចទាញព័ត៌មានបានទេ'}`
+                : `❌ Error: ${error.message || 'Could not fetch video info'}`;
+        }
+
+        await progress.safeEditMessage(bot, chatId, fetchingMsg.message_id, errMsg);
         userStates.delete(chatId);
     }
 }
@@ -69,10 +90,24 @@ async function handleQualitySelection(bot, query, userStates) {
         await sleep(500);
         await progress.safeEditMessage(bot, chatId, progressMsg.message_id, t('uploading', lang));
 
-        if (!fs.existsSync(filePath)) throw new Error('File not found');
+        if (!fs.existsSync(filePath)) throw new Error('Downloaded file not found on disk');
+
+        // Check file size — Telegram limit is 50MB
+        const stats   = fs.statSync(filePath);
+        const sizeMB  = stats.size / (1024 * 1024);
+
+        if (sizeMB > 49) {
+            fs.unlinkSync(filePath);
+            const sizeMsg = lang === 'km'
+                ? `❌ ឯកសារធំពេក (${sizeMB.toFixed(1)}MB)។ Telegram អនុញ្ញាតតែ 50MB។ សូមជ្រើស quality ទាប (360p ឬ 480p)។`
+                : `❌ File too large (${sizeMB.toFixed(1)}MB). Telegram allows max 50MB. Please choose lower quality (360p or 480p).`;
+            await progress.safeEditMessage(bot, chatId, progressMsg.message_id, sizeMsg);
+            userStates.delete(chatId);
+            return;
+        }
 
         await bot.sendDocument(chatId, filePath, {
-            caption: `🎬 ${state.videoInfo.title}\n\n📊 Quality: ${quality}`,
+            caption: `🎬 ${state.videoInfo.title}\n\n📊 Quality: ${quality} | 📦 Size: ${sizeMB.toFixed(1)}MB`,
             parse_mode: 'HTML'
         });
 
@@ -83,10 +118,26 @@ async function handleQualitySelection(bot, query, userStates) {
 
         const menuHandler = require('./menu');
         await menuHandler.showMainMenu(bot, chatId, userId);
+
     } catch (error) {
         console.error('Video download error:', error);
-        await progress.safeEditMessage(bot, chatId, progressMsg.message_id,
-            `❌ ${error.message || t('error_generic', lang)}`);
+
+        let errMsg = '';
+        if (error.message && error.message.includes('50')) {
+            errMsg = lang === 'km'
+                ? '❌ ឯកសារធំពេក។ សូមជ្រើស quality ទាប (360p ឬ 480p)។'
+                : '❌ File too large. Please choose lower quality (360p or 480p).';
+        } else if (error.message && error.message.includes('yt-dlp')) {
+            errMsg = lang === 'km'
+                ? '❌ yt-dlp error។ សូម contact admin។'
+                : '❌ yt-dlp error. Please contact admin.';
+        } else {
+            errMsg = lang === 'km'
+                ? `❌ Download បរាជ័យ: ${error.message || 'Unknown error'}`
+                : `❌ Download failed: ${error.message || 'Unknown error'}`;
+        }
+
+        await progress.safeEditMessage(bot, chatId, progressMsg.message_id, errMsg);
         userStates.delete(chatId);
     }
 }
