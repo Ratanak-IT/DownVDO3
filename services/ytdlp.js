@@ -128,33 +128,42 @@ async function getVideoInfo(url) {
     const qualitySet = new Set();
 
     if (info.formats) {
-        // Pre-check: does this video have any downloadable audio at all?
-        // YouTube: has audio-only streams (vcodec = 'none', acodec = something)
-        // TikTok:  has combined streams (both vcodec and acodec set)
-        const hasSeparateAudio = info.formats.some(
-            f => f.acodec && f.acodec !== 'none' && f.vcodec === 'none'
-        );
+        // hasAudio = true if ANY format has audio (covers both YouTube and TikTok)
+        // YouTube: separate audio-only stream exists (acodec set, vcodec = 'none'/null/undefined)
+        // TikTok:  combined stream exists (both acodec and vcodec set)
+        const hasAudio = info.formats.some(f => {
+            const hasAudioCodec = f.acodec && f.acodec !== 'none';
+            const hasVideoCodec = f.vcodec && f.vcodec !== 'none';
+            // Audio-only stream (YouTube) OR combined stream (TikTok)
+            return hasAudioCodec && !hasVideoCodec || hasAudioCodec && hasVideoCodec;
+        });
 
-        info.formats.forEach(fmt => {
-            // Must have video
-            if (!fmt.height || !fmt.vcodec || fmt.vcodec === 'none') return;
+        if (hasAudio) {
+            info.formats.forEach(fmt => {
+                // Only include formats that have a video stream
+                const hasVideoCodec = fmt.vcodec && fmt.vcodec !== 'none';
+                if (!fmt.height || !hasVideoCodec) return;
 
-            const hasCombinedAudio = fmt.acodec && fmt.acodec !== 'none';
-
-            // Show quality button if:
-            // - Format is combined (TikTok style: video+audio in one stream), OR
-            // - There is a separate audio stream to merge with (YouTube style)
-            if (hasCombinedAudio || hasSeparateAudio) {
                 const quality = `${fmt.height}p`;
                 if (!qualitySet.has(quality)) {
                     qualitySet.add(quality);
                     formats.push({ quality, height: fmt.height, formatId: fmt.format_id });
                 }
-            }
-        });
+            });
+        }
     }
 
     formats.sort((a, b) => a.height - b.height);
+
+    // Fallback: if no formats detected (common on server IPs with restricted access),
+    // show standard quality list anyway — downloadVideo uses --format-sort so it
+    // will pick the best actually-available format at download time
+    if (formats.length === 0) {
+        console.warn('⚠️  No formats detected from yt-dlp, using fallback quality list');
+        [144, 240, 360, 480, 720, 1080].forEach(h => {
+            formats.push({ quality: `${h}p`, height: h, formatId: `h${h}` });
+        });
+    }
 
     return {
         title:     info.title      || 'Unknown Title',
