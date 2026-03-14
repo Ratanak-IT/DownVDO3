@@ -59,6 +59,35 @@ const T = {
         en: 'ℹ️ About',
         km: 'ℹ️ អំពី Bot',
     },
+    // ── TikTok ─────────────────────────────────────────────────────────────────
+    btn_tiktok: {
+        en: '🎵 TikTok',
+        km: '🎵 TikTok',
+    },
+    btn_tiktok_video: {
+        en: '📹 Video (No Watermark)',
+        km: '📹 វីដេអូ (គ្មាន Watermark)',
+    },
+    btn_tiktok_mp3: {
+        en: '🎵 MP3',
+        km: '🎵 MP3',
+    },
+    tiktok_choose_type: {
+        en: `🎵 <b>TikTok Downloader</b>\n\nWhat would you like to download?`,
+        km: `🎵 <b>ទាញយក TikTok</b>\n\nចង់ទាញយកអ្វី?`,
+    },
+    ask_tiktok_video_url: {
+        en: `📹 <b>TikTok Video</b>\n\nSend me a TikTok link 🔗\n\nSupported:\n• tiktok.com/@user/video/...\n• vm.tiktok.com/...\n• vt.tiktok.com/...`,
+        km: `📹 <b>វីដេអូ TikTok</b>\n\nសូមផ្ញើ link TikTok 🔗\n\nគាំទ្រ:\n• tiktok.com/@user/video/...\n• vm.tiktok.com/...\n• vt.tiktok.com/...`,
+    },
+    ask_tiktok_mp3_url: {
+        en: `🎵 <b>TikTok to MP3</b>\n\nSend me a TikTok link 🔗\n\nSupported:\n• tiktok.com/@user/video/...\n• vm.tiktok.com/...\n• vt.tiktok.com/...`,
+        km: `🎵 <b>TikTok ទៅ MP3</b>\n\nសូមផ្ញើ link TikTok 🔗\n\nគាំទ្រ:\n• tiktok.com/@user/video/...\n• vm.tiktok.com/...\n• vt.tiktok.com/...`,
+    },
+    invalid_tiktok_url: {
+        en: `❌ <b>Invalid URL</b>\n\nPlease send a valid TikTok link.\n\nSupported:\n• tiktok.com/@user/video/...\n• vm.tiktok.com/...\n• vt.tiktok.com/...`,
+        km: `❌ <b>Link មិនត្រឹមត្រូវ</b>\n\nសូមផ្ញើ link TikTok ត្រឹមត្រូវ។\n\nគាំទ្រ:\n• tiktok.com/@user/video/...\n• vm.tiktok.com/...\n• vt.tiktok.com/...`,
+    },
     btn_settings: {
         en: '⚙️ Settings',
         km: '⚙️ ការកំណត់',
