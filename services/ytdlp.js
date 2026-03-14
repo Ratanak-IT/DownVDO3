@@ -1,7 +1,6 @@
 /**
  * 🔧 yt-dlp Service
  * Handles all YouTube download operations
- * Uses system yt-dlp binary (installed via pip in Dockerfile)
  */
 
 const { spawnSync, spawn } = require('child_process');
@@ -11,8 +10,6 @@ const { v4: uuidv4 } = require('uuid');
 const config = require('../config/env');
 
 // ── Find yt-dlp binary ─────────────────────────────────────────────────────────
-// On Railway: system binary from pip  → 'yt-dlp'
-// On Windows local: yt-dlp-exec bundled binary
 function getYtDlpBin() {
     const test = spawnSync('yt-dlp', ['--version'], { encoding: 'utf8' });
     if (test.status === 0) {
@@ -24,7 +21,7 @@ function getYtDlpBin() {
         console.log('✅ Using yt-dlp-exec binary:', binPath);
         return binPath;
     } catch {
-        console.warn('⚠️  yt-dlp not found via system or npm, using "yt-dlp" and hoping for the best');
+        console.warn('⚠️  yt-dlp not found via system or npm');
         return 'yt-dlp';
     }
 }
@@ -46,9 +43,6 @@ function ensureDownloadsDir() {
     }
 }
 
-/**
- * Run yt-dlp with given args, return stdout as string
- */
 function runYtDlp(args) {
     return new Promise((resolve, reject) => {
         const fullArgs = [...args, ...getCookieArgs()];
@@ -110,25 +104,17 @@ async function getVideoInfo(url) {
     const qualitySet = new Set();
 
     if (info.formats) {
-        // Collect heights that have a real video stream
-        const videoHeights = new Set(
-            info.formats
-                .filter(f => f.height && f.vcodec && f.vcodec !== 'none')
-                .map(f => f.height)
-        );
+        const hasAudio = info.formats.some(f => f.acodec && f.acodec !== 'none');
 
-        // Only show quality if audio is also available — prevents "format not available"
-        const hasAudio = info.formats.some(
-            f => f.acodec && f.acodec !== 'none'
-        );
-
-        videoHeights.forEach(height => {
-            const quality = `${height}p`;
-            if (!qualitySet.has(quality) && hasAudio) {
-                qualitySet.add(quality);
-                formats.push({ quality, height, formatId: `h${height}` });
-            }
-        });
+        info.formats
+            .filter(f => f.height && f.vcodec && f.vcodec !== 'none')
+            .forEach(fmt => {
+                const quality = `${fmt.height}p`;
+                if (!qualitySet.has(quality) && hasAudio) {
+                    qualitySet.add(quality);
+                    formats.push({ quality, height: fmt.height, formatId: fmt.format_id });
+                }
+            });
     }
 
     formats.sort((a, b) => a.height - b.height);
@@ -151,18 +137,11 @@ async function downloadVideo(url, quality, chatId) {
     const outputPath = path.join(config.DOWNLOAD_PATH, `video_${chatId}_${uid}.mp4`);
     const height     = parseInt(quality.replace('p', ''));
 
-    // Multiple fallbacks — tries each left to right until one works
-    const format = [
-        `bestvideo[height<=${height}][ext=mp4]+bestaudio[ext=m4a]`,
-        `bestvideo[height<=${height}]+bestaudio`,
-        `best[height<=${height}]`,
-        `bestvideo[height<=${height}]/best[height<=${height}]`,
-        'bestvideo+bestaudio',
-        'best',
-    ].join('/');
-
+    // Use --format-sort to prefer the requested height, then let yt-dlp
+    // pick the best available format automatically — avoids "format not available"
     await runYtDlp([
-        '-f', format,
+        '--format-sort', `res:${height},ext:mp4:m4a`,
+        '-f', 'bestvideo+bestaudio/best',
         '--merge-output-format', 'mp4',
         '-o', outputPath,
         '--no-warnings',
@@ -227,8 +206,6 @@ async function searchYouTube(query, limit = 10) {
 
     return results;
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
 
 module.exports = {
     isValidYouTubeUrl,
