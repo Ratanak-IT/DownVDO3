@@ -1,51 +1,28 @@
 /**
  * 📱 Menu Handler
- * Manages main menu display and navigation
  */
 
-const messages = require('../utils/messages');
+const { getUserLang, t } = require('../utils/lang');
 const buttons = require('../utils/buttons');
 
-/**
- * Show main menu (sends new message)
- * @param {TelegramBot} bot 
- * @param {number} chatId 
- * @param {number} userId 
- */
 async function showMainMenu(bot, chatId, userId) {
-    const menuText = messages.getMenuText();
-    const menuButtons = buttons.getMainMenu(userId);
-
-    await bot.sendMessage(chatId, menuText, {
+    const lang = getUserLang(userId);
+    await bot.sendMessage(chatId, t('menu', lang), {
         parse_mode: 'HTML',
-        reply_markup: {
-            inline_keyboard: menuButtons
-        }
+        reply_markup: { inline_keyboard: buttons.getMainMenu(userId, lang) }
     });
 }
 
-/**
- * Show main menu by editing existing message
- * @param {TelegramBot} bot 
- * @param {number} chatId 
- * @param {number} messageId 
- * @param {number} userId 
- */
 async function editToMainMenu(bot, chatId, messageId, userId) {
-    const menuText = messages.getMenuText();
-    const menuButtons = buttons.getMainMenu(userId);
-
+    const lang = getUserLang(userId);
     try {
-        await bot.editMessageText(menuText, {
+        await bot.editMessageText(t('menu', lang), {
             chat_id: chatId,
             message_id: messageId,
             parse_mode: 'HTML',
-            reply_markup: {
-                inline_keyboard: menuButtons
-            }
+            reply_markup: { inline_keyboard: buttons.getMainMenu(userId, lang) }
         });
-    } catch (error) {
-        // If edit fails, send new message
+    } catch (e) {
         await showMainMenu(bot, chatId, userId);
     }
 }

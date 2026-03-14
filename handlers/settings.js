@@ -1,69 +1,44 @@
 /**
  * ⚙️ Settings Handler
- * Manages owner-only settings menu
  */
-
-const { isOwner, getAutoDeleteMinutes, setAutoDeleteMinutes } = require('../config/owner');
+const { getAutoDeleteMinutes, setAutoDeleteMinutes } = require('../config/owner');
+const { getUserLang, t } = require('../utils/lang');
 const buttons = require('../utils/buttons');
 
-/**
- * Show settings menu
- * @param {TelegramBot} bot 
- * @param {number} chatId 
- */
-async function showSettings(bot, chatId) {
-    const currentTime = getAutoDeleteMinutes();
-    
-    const settingsText = `⚙️ <b>Bot Settings</b>\n\n` +
-        `🧹 <b>Auto Delete Files:</b> ${currentTime} minutes\n\n` +
-        `Select auto-delete time for downloaded files:`;
-
-    const settingsButtons = buttons.getSettingsButtons(currentTime);
-
-    await bot.sendMessage(chatId, settingsText, {
+async function showSettings(bot, chatId, lang) {
+    lang = lang || getUserLang(chatId);
+    const min = getAutoDeleteMinutes();
+    await bot.sendMessage(chatId, t('settings', lang, min), {
         parse_mode: 'HTML',
-        reply_markup: {
-            inline_keyboard: settingsButtons
-        }
+        reply_markup: { inline_keyboard: buttons.getSettingsButtons(min, lang) }
     });
 }
 
-/**
- * Handle auto-delete time selection
- * @param {TelegramBot} bot 
- * @param {CallbackQuery} query 
- */
-async function handleAutoDelete(bot, query) {
-    const chatId = query.message.chat.id;
-    const messageId = query.message.message_id;
+async function handleAutoDelete(bot, query, lang) {
+    const chatId  = query.message.chat.id;
+    const msgId   = query.message.message_id;
     const minutes = parseInt(query.data.replace('autodelete_', ''));
+    const current = getAutoDeleteMinutes();
+    lang = lang || getUserLang(query.from.id);
 
-    // Update setting
+    if (minutes === current) {
+        await bot.answerCallbackQuery(query.id, {
+            text: t('already_set', lang, minutes), show_alert: false
+        });
+        return;
+    }
+
     setAutoDeleteMinutes(minutes);
-
-    // Update message
-    const settingsText = `⚙️ <b>Bot Settings</b>\n\n` +
-        `🧹 <b>Auto Delete Files:</b> ${minutes} minutes\n\n` +
-        `✅ Setting updated successfully!`;
-
-    const settingsButtons = buttons.getSettingsButtons(minutes);
-
-    await bot.editMessageText(settingsText, {
-        chat_id: chatId,
-        message_id: messageId,
-        parse_mode: 'HTML',
-        reply_markup: {
-            inline_keyboard: settingsButtons
-        }
-    });
+    try {
+        await bot.editMessageText(t('settings_updated', lang, minutes), {
+            chat_id: chatId, message_id: msgId, parse_mode: 'HTML',
+            reply_markup: { inline_keyboard: buttons.getSettingsButtons(minutes, lang) }
+        });
+    } catch (e) {}
 
     await bot.answerCallbackQuery(query.id, {
-        text: `✅ Auto-delete set to ${minutes} minutes`,
-        show_alert: false
+        text: t('already_set', lang, minutes), show_alert: false
     });
 }
 
-module.exports = {
-    showSettings,
-    handleAutoDelete
-};
+module.exports = { showSettings, handleAutoDelete };

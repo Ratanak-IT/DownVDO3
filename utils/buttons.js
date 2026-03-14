@@ -1,189 +1,117 @@
 /**
- * 🔘 Buttons Utility
- * Inline keyboard button generators
+ * 🔘 Buttons Utility — with language support
  */
 
 const { isOwner } = require('../config/owner');
+const { t } = require('./lang');
 
-/**
- * Get main menu buttons
- * @param {number} userId 
- * @returns {Array}
- */
-function getMainMenu(userId) {
-    const buttons = [
-        [{ text: '🎬 Video Download', callback_data: 'video_download' }],
-        [{ text: '🎵 YouTube to MP3', callback_data: 'audio_download' }],
-        [{ text: '🔍 Song by Name', callback_data: 'song_search' }],
-        [{ text: '🖼️ Thumbnail Download', callback_data: 'thumbnail_download' }],
-        [{ text: 'ℹ️ About', callback_data: 'about' }]
+function getMainMenu(userId, lang = 'en') {
+    const btns = [
+        [{ text: t('btn_video', lang),     callback_data: 'video_download' }],
+        [{ text: t('btn_audio', lang),     callback_data: 'audio_download' }],
+        [{ text: t('btn_song', lang),      callback_data: 'song_search' }],
+        [{ text: t('btn_thumbnail', lang), callback_data: 'thumbnail_download' }],
+        [{ text: t('btn_language', lang),  callback_data: 'choose_language' }],
+        [{ text: t('btn_about', lang),     callback_data: 'about' }],
     ];
-
-    // Add settings button for owner only
     if (isOwner(userId)) {
-        buttons.push([{ text: '⚙️ Settings', callback_data: 'settings' }]);
+        btns.push([{ text: t('btn_settings', lang), callback_data: 'settings' }]);
     }
-
-    return buttons;
+    return btns;
 }
 
-/**
- * Get cancel button
- * @returns {Array}
- */
-function getCancelButton() {
-    return [[{ text: '❌ Cancel', callback_data: 'cancel' }]];
+function getCancelButton(lang = 'en') {
+    return [[{ text: t('btn_cancel', lang), callback_data: 'cancel' }]];
 }
 
-/**
- * Get video quality buttons based on available formats
- * @param {Array} formats 
- * @returns {Array}
- */
-function getVideoQualityButtons(formats) {
-    const standardQualities = ['144p', '240p', '360p', '480p', '720p', '1080p', '1440p', '2160p'];
-    const availableQualities = formats.map(f => f.quality);
-    
-    const buttons = [];
+function getBackButton(lang = 'en') {
+    return [[{ text: t('btn_back', lang), callback_data: 'main_menu' }]];
+}
+
+function getVideoQualityButtons(formats, lang = 'en') {
+    const standard = ['144p','240p','360p','480p','720p','1080p','1440p','2160p'];
+    const available = formats.map(f => f.quality);
+    const btns = [];
     let row = [];
-
-    standardQualities.forEach(quality => {
-        if (availableQualities.includes(quality)) {
-            row.push({
-                text: `📹 ${quality}`,
-                callback_data: `vq_${quality}`
-            });
-
-            if (row.length === 2) {
-                buttons.push(row);
-                row = [];
-            }
+    standard.forEach(q => {
+        if (available.includes(q)) {
+            row.push({ text: `📹 ${q}`, callback_data: `vq_${q}` });
+            if (row.length === 2) { btns.push(row); row = []; }
         }
     });
-
-    if (row.length > 0) {
-        buttons.push(row);
-    }
-
-    // Add cancel button
-    buttons.push([{ text: '❌ Cancel', callback_data: 'cancel' }]);
-
-    return buttons;
+    if (row.length > 0) btns.push(row);
+    btns.push([{ text: t('btn_cancel', lang), callback_data: 'cancel' }]);
+    return btns;
 }
 
-/**
- * Get audio quality buttons
- * @returns {Array}
- */
-function getAudioQualityButtons() {
+function getAudioQualityButtons(lang = 'en') {
     return [
-        [
-            { text: '🎧 64 kbps', callback_data: 'aq_64' },
-            { text: '🎧 128 kbps', callback_data: 'aq_128' }
-        ],
-        [
-            { text: '🎧 192 kbps', callback_data: 'aq_192' },
-            { text: '🎧 320 kbps', callback_data: 'aq_320' }
-        ],
-        [{ text: '❌ Cancel', callback_data: 'cancel' }]
+        [{ text: '🎧 64 kbps',  callback_data: 'aq_64'  },
+         { text: '🎧 128 kbps', callback_data: 'aq_128' }],
+        [{ text: '🎧 192 kbps', callback_data: 'aq_192' },
+         { text: '🎧 320 kbps', callback_data: 'aq_320' }],
+        [{ text: t('btn_cancel', lang), callback_data: 'cancel' }],
     ];
 }
 
-/**
- * Get song audio quality buttons
- * @returns {Array}
- */
-function getSongAudioQualityButtons() {
+function getSongAudioQualityButtons(lang = 'en') {
     return [
-        [
-            { text: '🎧 64 kbps', callback_data: 'saq_64' },
-            { text: '🎧 128 kbps', callback_data: 'saq_128' }
-        ],
-        [
-            { text: '🎧 192 kbps', callback_data: 'saq_192' },
-            { text: '🎧 320 kbps', callback_data: 'saq_320' }
-        ],
-        [{ text: '❌ Cancel', callback_data: 'cancel' }]
+        [{ text: '🎧 64 kbps',  callback_data: 'saq_64'  },
+         { text: '🎧 128 kbps', callback_data: 'saq_128' }],
+        [{ text: '🎧 192 kbps', callback_data: 'saq_192' },
+         { text: '🎧 320 kbps', callback_data: 'saq_320' }],
+        [{ text: t('btn_cancel', lang), callback_data: 'cancel' }],
     ];
 }
 
-/**
- * Get song search result buttons
- * @param {Array} results 
- * @param {number} startIndex 
- * @param {boolean} hasMore 
- * @returns {Array}
- */
-function getSongResultButtons(results, startIndex = 0, hasMore = true) {
-    const buttons = results.map((result, idx) => {
-        const globalIndex = startIndex + idx;
-        const title = result.title.length > 40 
-            ? result.title.substring(0, 40) + '...' 
-            : result.title;
-        
-        return [{
-            text: `🎵 ${title}`,
-            callback_data: `song_${globalIndex}`
-        }];
+function getSongResultButtons(results, startIndex = 0, hasMore = true, lang = 'en') {
+    const btns = results.map((r, i) => {
+        const title = r.title.length > 40 ? r.title.substring(0, 40) + '...' : r.title;
+        return [{ text: `🎵 ${title}`, callback_data: `song_${startIndex + i}` }];
     });
-
-    // Add more button if there are more results
-    if (hasMore) {
-        buttons.push([{ text: '➕ More Results', callback_data: 'more_results' }]);
-    }
-
-    // Add cancel button
-    buttons.push([{ text: '❌ Cancel', callback_data: 'cancel' }]);
-
-    return buttons;
+    if (hasMore) btns.push([{ text: t('btn_more', lang), callback_data: 'more_results' }]);
+    btns.push([{ text: t('btn_cancel', lang), callback_data: 'cancel' }]);
+    return btns;
 }
 
-/**
- * Get thumbnail quality buttons
- * @returns {Array}
- */
-function getThumbnailQualityButtons() {
+function getThumbnailQualityButtons(lang = 'en') {
     return [
-        [
-            { text: '📷 Default', callback_data: 'thumb_default' },
-            { text: '📷 Medium', callback_data: 'thumb_medium' }
-        ],
-        [
-            { text: '📷 High', callback_data: 'thumb_high' },
-            { text: '📷 Max Res', callback_data: 'thumb_max' }
-        ],
-        [{ text: '❌ Cancel', callback_data: 'cancel' }]
+        [{ text: '📷 Default', callback_data: 'thumb_default' },
+         { text: '📷 Medium',  callback_data: 'thumb_medium'  }],
+        [{ text: '📷 High',    callback_data: 'thumb_high'    },
+         { text: '📷 Max Res', callback_data: 'thumb_max'     }],
+        [{ text: t('btn_cancel', lang), callback_data: 'cancel' }],
     ];
 }
 
-/**
- * Get settings buttons
- * @param {number} currentTime 
- * @returns {Array}
- */
-function getSettingsButtons(currentTime) {
+function getSettingsButtons(currentTime, lang = 'en') {
     const times = [1, 2, 3, 5, 10];
-    
-    const buttons = times.map(time => {
-        const isSelected = time === currentTime;
-        return [{
-            text: `${isSelected ? '✅' : '⏱️'} ${time} minute${time > 1 ? 's' : ''}`,
-            callback_data: `autodelete_${time}`
-        }];
-    });
+    const btns = times.map(m => [{
+        text: `${m === currentTime ? '✅' : '⏱️'} ${m} min${m > 1 ? 's' : ''}`,
+        callback_data: `autodelete_${m}`
+    }]);
+    btns.push([{ text: t('btn_back', lang), callback_data: 'main_menu' }]);
+    return btns;
+}
 
-    buttons.push([{ text: '🏠 Back to Menu', callback_data: 'main_menu' }]);
-
-    return buttons;
+function getLanguageButtons() {
+    return [
+        [
+            { text: '🌐 English', callback_data: 'set_lang_en' },
+            { text: '🇰🇭 ខ្មែរ',   callback_data: 'set_lang_km' },
+        ]
+    ];
 }
 
 module.exports = {
     getMainMenu,
     getCancelButton,
+    getBackButton,
     getVideoQualityButtons,
     getAudioQualityButtons,
     getSongAudioQualityButtons,
     getSongResultButtons,
     getThumbnailQualityButtons,
-    getSettingsButtons
+    getSettingsButtons,
+    getLanguageButtons,
 };

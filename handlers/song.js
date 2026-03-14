@@ -1,3 +1,4 @@
+const { getUserLang, t } = require('../utils/lang');
 /**
  * 🔍 Song Handler
  * Manages song search by name flow
@@ -9,6 +10,7 @@ const cleanup = require('../services/cleanup');
 const messages = require('../utils/messages');
 const buttons = require('../utils/buttons');
 const progress = require('../utils/progress');
+const fs = require('fs');
 
 /**
  * Initiate song search flow
@@ -17,13 +19,11 @@ const progress = require('../utils/progress');
  * @param {Map} userStates 
  */
 async function initiateSongSearch(bot, chatId, userStates) {
+    const lang = getUserLang(chatId);
     userStates.set(chatId, { action: 'awaiting_song_query' });
-    
-    await bot.sendMessage(chatId, messages.getAskSongName(), {
+    await bot.sendMessage(chatId, t('ask_song_name', lang), {
         parse_mode: 'HTML',
-        reply_markup: {
-            inline_keyboard: buttons.getCancelButton()
-        }
+        reply_markup: { inline_keyboard: buttons.getCancelButton(lang) }
     });
 }
 
@@ -38,7 +38,7 @@ async function processSongSearch(bot, msg, userStates) {
     const query = msg.text.trim();
 
     // Send searching message
-    const searchingMsg = await bot.sendMessage(chatId, '🔍 Searching for songs...', {
+    const searchingMsg = await bot.sendMessage(chatId, t('searching', getUserLang(msg.from.id)), {
         parse_mode: 'HTML'
     });
 
@@ -47,27 +47,31 @@ async function processSongSearch(bot, msg, userStates) {
         const results = await ytdlp.searchYouTube(query, 10);
 
         if (results.length === 0) {
-            await bot.editMessageText('😕 No results found. Try a different search.', {
-                chat_id: chatId,
-                message_id: searchingMsg.message_id
-            });
+            await progress.safeEditMessage(
+                bot,
+                chatId,
+                searchingMsg.message_id,
+                t('no_results', getUserLang(msg.from.id))
+            );
             return;
         }
 
         // Delete searching message
-        await bot.deleteMessage(chatId, searchingMsg.message_id).catch(() => {});
+        await progress.safeDeleteMessage(bot, chatId, searchingMsg.message_id);
 
         // Store results in state
         userStates.set(chatId, {
             action: 'awaiting_song_selection',
             results: results,
-            currentPage: 0
+            currentPage: 0,
+            query: query
         });
 
         // Show first 5 results
-        const resultButtons = buttons.getSongResultButtons(results.slice(0, 5), 0);
+        const hasMore = results.length > 5;
+        const resultButtons = buttons.getSongResultButtons(results.slice(0, 5), 0, hasMore, getUserLang(msg.from.id));
         
-        await bot.sendMessage(chatId, messages.getSongSearchResults(query), {
+        await bot.sendMessage(chatId, t('search_results', getUserLang(msg.from.id), query), {
             parse_mode: 'HTML',
             reply_markup: {
                 inline_keyboard: resultButtons
@@ -76,10 +80,12 @@ async function processSongSearch(bot, msg, userStates) {
 
     } catch (error) {
         console.error('Song search error:', error);
-        await bot.editMessageText('❌ Search failed. Please try again.', {
-            chat_id: chatId,
-            message_id: searchingMsg.message_id
-        });
+        await progress.safeEditMessage(
+            bot,
+            chatId,
+            searchingMsg.message_id,
+            t('error_generic', getUserLang(msg.from.id))
+        );
         userStates.delete(chatId);
     }
 }
@@ -96,7 +102,7 @@ async function showMoreResults(bot, query, userStates) {
     const state = userStates.get(chatId);
 
     if (!state || !state.results) {
-        await bot.sendMessage(chatId, '❌ Session expired. Please search again.');
+        await bot.sendMessage(chatId, t('session_expired', getUserLang(query.from.id)));
         return;
     }
 
@@ -120,16 +126,21 @@ async function showMoreResults(bot, query, userStates) {
         currentPage: nextPage
     });
 
-    // Show next results
+    // Check if there are more results after this page
     const hasMore = endIdx < state.results.length;
     const resultButtons = buttons.getSongResultButtons(pageResults, startIdx, hasMore);
 
-    await bot.editMessageReplyMarkup({
-        inline_keyboard: resultButtons
-    }, {
-        chat_id: chatId,
-        message_id: messageId
-    });
+    try {
+        await bot.editMessageReplyMarkup({
+            inline_keyboard: resultButtons
+        }, {
+            chat_id: chatId,
+            message_id: messageId
+        });
+    } catch (error) {
+        // Ignore edit errors
+        console.error('Edit markup error:', error.message);
+    }
 }
 
 /**
@@ -144,25 +155,25 @@ async function handleSongSelection(bot, query, userStates) {
     const state = userStates.get(chatId);
 
     if (!state || !state.results) {
-        await bot.sendMessage(chatId, '❌ Session expired. Please search again.');
+        await bot.sendMessage(chatId, t('session_expired', getUserLang(query.from.id)));
         return;
     }
 
     const selectedSong = state.results[songIndex];
     if (!selectedSong) {
-        await bot.sendMessage(chatId, '❌ Invalid selection.');
+        await bot.sendMessage(chatId, t('error_generic', getUserLang(query.from.id)));
         return;
     }
 
     // Fetch full video info
-    const fetchingMsg = await bot.sendMessage(chatId, '⏳ Fetching song details...', {
+    const fetchingMsg = await bot.sendMessage(chatId, t('fetching_audio', getUserLang(query.from.id)), {
         parse_mode: 'HTML'
     });
 
     try {
         const videoInfo = await ytdlp.getVideoInfo(selectedSong.url);
         
-        await bot.deleteMessage(chatId, fetchingMsg.message_id).catch(() => {});
+        await progress.safeDeleteMessage(bot, chatId, fetchingMsg.message_id);
 
         // Update state with selected song
         userStates.set(chatId, {
@@ -172,7 +183,7 @@ async function handleSongSelection(bot, query, userStates) {
         });
 
         // Show audio quality buttons
-        const qualityButtons = buttons.getSongAudioQualityButtons();
+        const qualityButtons = buttons.getSongAudioQualityButtons(getUserLang(query.from.id));
         
         await bot.sendMessage(chatId, messages.getSongInfo(videoInfo), {
             parse_mode: 'HTML',
@@ -183,10 +194,12 @@ async function handleSongSelection(bot, query, userStates) {
 
     } catch (error) {
         console.error('Song selection error:', error);
-        await bot.editMessageText('❌ Failed to fetch song details.', {
-            chat_id: chatId,
-            message_id: fetchingMsg.message_id
-        });
+        await progress.safeEditMessage(
+            bot,
+            chatId,
+            fetchingMsg.message_id,
+            t('error_generic', getUserLang(query.from.id))
+        );
     }
 }
 
@@ -208,45 +221,63 @@ async function handleSongAudioQuality(bot, query, userStates) {
     }
 
     // Send progress message
-    const progressMsg = await bot.sendMessage(chatId, progress.getDownloadingAudio(), {
+    const progressMsg = await bot.sendMessage(chatId, t('downloading_audio', getUserLang(query.from.id)), {
         parse_mode: 'HTML'
     });
 
+    let audioPath = null;
+    let mp3Path = null;
+
     try {
         // Download audio
-        const audioPath = await ytdlp.downloadAudio(state.url, bitrate, chatId);
+        audioPath = await ytdlp.downloadAudio(state.url, bitrate, chatId);
 
         // Update progress
-        await bot.editMessageText(progress.getProcessing(), {
-            chat_id: chatId,
-            message_id: progressMsg.message_id,
-            parse_mode: 'HTML'
-        });
+        await progress.safeEditMessage(
+            bot,
+            chatId,
+            progressMsg.message_id,
+            t('processing', getUserLang(query.from.id))
+        );
+
+        await sleep(500);
 
         // Convert to MP3
-        const mp3Path = await ffmpegService.convertToMp3(audioPath, bitrate);
+        mp3Path = await ffmpegService.convertToMp3(audioPath, bitrate);
 
         // Uploading
-        await bot.editMessageText(progress.getUploading(), {
-            chat_id: chatId,
-            message_id: progressMsg.message_id,
-            parse_mode: 'HTML'
-        });
+        await progress.safeEditMessage(
+            bot,
+            chatId,
+            progressMsg.message_id,
+            t('uploading', getUserLang(query.from.id))
+        );
+
+        // Check file
+        const finalPath = mp3Path || audioPath;
+        if (!fs.existsSync(finalPath)) {
+            throw new Error('Audio file not found');
+        }
 
         // Send as document
-        await bot.sendDocument(chatId, mp3Path, {
+        await bot.sendDocument(chatId, finalPath, {
             caption: `🎶 ${state.videoInfo.title}\n\n🎧 Quality: ${bitrate} kbps`,
             parse_mode: 'HTML'
         });
 
         // Cleanup
-        await bot.deleteMessage(chatId, progressMsg.message_id).catch(() => {});
-        await bot.sendMessage(chatId, messages.getDownloadSuccess(), {
+        await progress.safeDeleteMessage(bot, chatId, progressMsg.message_id);
+        
+        await bot.sendMessage(chatId, t('download_success', getUserLang(query.from.id)), {
             parse_mode: 'HTML'
         });
 
-        cleanup.scheduleDelete(audioPath);
-        cleanup.scheduleDelete(mp3Path);
+        if (audioPath && audioPath !== mp3Path) {
+            cleanup.scheduleDelete(audioPath);
+        }
+        if (mp3Path) {
+            cleanup.scheduleDelete(mp3Path);
+        }
 
         userStates.delete(chatId);
 
@@ -256,12 +287,33 @@ async function handleSongAudioQuality(bot, query, userStates) {
 
     } catch (error) {
         console.error('Song download error:', error);
-        await bot.editMessageText('❌ Download failed. Please try again.', {
-            chat_id: chatId,
-            message_id: progressMsg.message_id
-        });
+        
+        await progress.safeEditMessage(
+            bot,
+            chatId,
+            progressMsg.message_id,
+            `❌ Download failed: ${error.message || 'Unknown error'}`
+        );
+        
+        // Cleanup on error
+        if (audioPath && fs.existsSync(audioPath)) {
+            cleanup.scheduleDelete(audioPath);
+        }
+        if (mp3Path && fs.existsSync(mp3Path)) {
+            cleanup.scheduleDelete(mp3Path);
+        }
+        
         userStates.delete(chatId);
     }
+}
+
+/**
+ * Sleep helper function
+ * @param {number} ms 
+ * @returns {Promise}
+ */
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 module.exports = {

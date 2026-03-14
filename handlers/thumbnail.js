@@ -1,3 +1,4 @@
+const { getUserLang, t } = require('../utils/lang');
 /**
  * 🖼️ Thumbnail Handler
  * Manages YouTube thumbnail download flow
@@ -7,6 +8,7 @@ const ytdlp = require('../services/ytdlp');
 const cleanup = require('../services/cleanup');
 const messages = require('../utils/messages');
 const buttons = require('../utils/buttons');
+const progress = require('../utils/progress');
 const https = require('https');
 const http = require('http');
 const fs = require('fs');
@@ -21,13 +23,11 @@ const { v4: uuidv4 } = require('uuid');
  * @param {Map} userStates 
  */
 async function initiateThumbnailDownload(bot, chatId, userStates) {
+    const lang = getUserLang(chatId);
     userStates.set(chatId, { action: 'awaiting_thumbnail_url' });
-    
-    await bot.sendMessage(chatId, messages.getAskThumbnailUrl(), {
+    await bot.sendMessage(chatId, t('ask_thumbnail_url', lang), {
         parse_mode: 'HTML',
-        reply_markup: {
-            inline_keyboard: buttons.getCancelButton()
-        }
+        reply_markup: { inline_keyboard: buttons.getCancelButton(lang) }
     });
 }
 
@@ -50,7 +50,7 @@ async function processThumbnailUrl(bot, msg, userStates) {
     }
 
     // Send fetching message
-    const fetchingMsg = await bot.sendMessage(chatId, '⏳ Fetching thumbnail options...', {
+    const fetchingMsg = await bot.sendMessage(chatId, t('fetching_thumbnail', getUserLang(msg.from.id)), {
         parse_mode: 'HTML'
     });
 
@@ -59,7 +59,7 @@ async function processThumbnailUrl(bot, msg, userStates) {
         const videoInfo = await ytdlp.getVideoInfo(url);
         
         // Delete fetching message
-        await bot.deleteMessage(chatId, fetchingMsg.message_id).catch(() => {});
+        await progress.safeDeleteMessage(bot, chatId, fetchingMsg.message_id);
 
         // Generate thumbnail URLs for different qualities
         const videoId = ytdlp.extractVideoId(url);
@@ -79,7 +79,7 @@ async function processThumbnailUrl(bot, msg, userStates) {
         });
 
         // Send preview with quality buttons
-        const qualityButtons = buttons.getThumbnailQualityButtons();
+        const qualityButtons = buttons.getThumbnailQualityButtons(getUserLang(msg.from.id));
         
         await bot.sendPhoto(chatId, thumbnails.high, {
             caption: messages.getThumbnailInfo(videoInfo),
@@ -91,10 +91,12 @@ async function processThumbnailUrl(bot, msg, userStates) {
 
     } catch (error) {
         console.error('Thumbnail info error:', error);
-        await bot.editMessageText('❌ Failed to fetch thumbnail. Please check the URL.', {
-            chat_id: chatId,
-            message_id: fetchingMsg.message_id
-        });
+        await progress.safeEditMessage(
+            bot,
+            chatId,
+            fetchingMsg.message_id,
+            t('error_generic', getUserLang(msg.from.id))
+        );
         userStates.delete(chatId);
     }
 }
@@ -110,9 +112,11 @@ function downloadImage(url, filePath) {
         const protocol = url.startsWith('https') ? https : http;
         const file = fs.createWriteStream(filePath);
         
-        protocol.get(url, (response) => {
+        const request = protocol.get(url, (response) => {
             // Handle redirects
             if (response.statusCode === 302 || response.statusCode === 301) {
+                file.close();
+                fs.unlink(filePath, () => {});
                 downloadImage(response.headers.location, filePath)
                     .then(resolve)
                     .catch(reject);
@@ -120,6 +124,8 @@ function downloadImage(url, filePath) {
             }
             
             if (response.statusCode !== 200) {
+                file.close();
+                fs.unlink(filePath, () => {});
                 reject(new Error(`Failed to download: ${response.statusCode}`));
                 return;
             }
@@ -129,9 +135,20 @@ function downloadImage(url, filePath) {
                 file.close();
                 resolve(filePath);
             });
-        }).on('error', (err) => {
+        });
+
+        request.on('error', (err) => {
+            file.close();
             fs.unlink(filePath, () => {});
             reject(err);
+        });
+
+        // Set timeout
+        request.setTimeout(30000, () => {
+            request.destroy();
+            file.close();
+            fs.unlink(filePath, () => {});
+            reject(new Error('Download timeout'));
         });
     });
 }
@@ -149,7 +166,7 @@ async function handleThumbnailQuality(bot, query, userStates) {
     const state = userStates.get(chatId);
 
     if (!state || !state.thumbnails) {
-        await bot.sendMessage(chatId, '❌ Session expired. Please start again.');
+        await bot.sendMessage(chatId, t('session_expired', getUserLang(query.from.id)));
         return;
     }
 
@@ -160,11 +177,16 @@ async function handleThumbnailQuality(bot, query, userStates) {
     }
 
     // Send downloading message
-    const progressMsg = await bot.sendMessage(chatId, '⏳ Downloading thumbnail...', {
+    const progressMsg = await bot.sendMessage(chatId, t('downloading_thumb', getUserLang(query.from.id)), {
         parse_mode: 'HTML'
     });
 
     try {
+        // Ensure downloads directory exists
+        if (!fs.existsSync(config.DOWNLOAD_PATH)) {
+            fs.mkdirSync(config.DOWNLOAD_PATH, { recursive: true });
+        }
+
         // Download thumbnail
         const fileName = `thumb_${state.videoId}_${quality}_${uuidv4()}.jpg`;
         const filePath = path.join(config.DOWNLOAD_PATH, fileName);
@@ -172,20 +194,23 @@ async function handleThumbnailQuality(bot, query, userStates) {
         await downloadImage(thumbnailUrl, filePath);
 
         // Check if maxres is available (fallback to hq if not)
-        if (quality === 'max' && fs.statSync(filePath).size < 1000) {
+        const stats = fs.statSync(filePath);
+        if (quality === 'max' && stats.size < 1000) {
             fs.unlinkSync(filePath);
             await downloadImage(state.thumbnails.high, filePath);
-            await bot.sendMessage(chatId, '📝 Max resolution not available, using high quality.', {
+            
+            await bot.sendMessage(chatId, t('thumb_not_max', getUserLang(query.from.id)), {
                 parse_mode: 'HTML'
             });
         }
 
         // Update progress
-        await bot.editMessageText('📤 Uploading thumbnail...', {
-            chat_id: chatId,
-            message_id: progressMsg.message_id,
-            parse_mode: 'HTML'
-        });
+        await progress.safeEditMessage(
+            bot,
+            chatId,
+            progressMsg.message_id,
+            t('uploading_thumb', getUserLang(query.from.id))
+        );
 
         // Send as document
         await bot.sendDocument(chatId, filePath, {
@@ -194,8 +219,9 @@ async function handleThumbnailQuality(bot, query, userStates) {
         });
 
         // Cleanup
-        await bot.deleteMessage(chatId, progressMsg.message_id).catch(() => {});
-        await bot.sendMessage(chatId, messages.getDownloadSuccess(), {
+        await progress.safeDeleteMessage(bot, chatId, progressMsg.message_id);
+        
+        await bot.sendMessage(chatId, t('download_success', getUserLang(query.from.id)), {
             parse_mode: 'HTML'
         });
 
@@ -208,10 +234,12 @@ async function handleThumbnailQuality(bot, query, userStates) {
 
     } catch (error) {
         console.error('Thumbnail download error:', error);
-        await bot.editMessageText('❌ Failed to download thumbnail.', {
-            chat_id: chatId,
-            message_id: progressMsg.message_id
-        });
+        await progress.safeEditMessage(
+            bot,
+            chatId,
+            progressMsg.message_id,
+            `❌ Failed to download thumbnail: ${error.message || 'Unknown error'}`
+        );
         userStates.delete(chatId);
     }
 }

@@ -1,35 +1,33 @@
 /**
- * 🎯 Start Handler
- * Handles /start command and welcome flow
+ * 🎯 Start Handler — with Language Selection
  */
 
-const messages = require('../utils/messages');
+const { getUserLang, t } = require('../utils/lang');
 const buttons = require('../utils/buttons');
 
-/**
- * Handle /start command
- * @param {TelegramBot} bot 
- * @param {Message} msg 
- * @param {Map} userStates 
- */
 async function handleStart(bot, msg, userStates) {
-    const chatId = msg.chat.id;
-    const userId = msg.from.id;
-    const firstName = msg.from.first_name || 'there';
+    const chatId  = msg.chat.id;
+    const userId  = msg.from.id;
+    const name    = msg.from.first_name || 'there';
+    const lang    = getUserLang(userId);
 
-    // Clear any existing user state
     userStates.delete(chatId);
 
-    // Send welcome message with main menu
-    const welcomeText = messages.getWelcome(firstName);
-    const menuButtons = buttons.getMainMenu(userId);
-
-    await bot.sendMessage(chatId, welcomeText, {
-        parse_mode: 'HTML',
-        reply_markup: {
-            inline_keyboard: menuButtons
+    // Show welcome + language picker first
+    await bot.sendMessage(chatId,
+        `👋 Hey <b>${name}</b>!\n\n🌐 Please choose your language / ជ្រើសរើសភាសារបស់អ្នក:`,
+        {
+            parse_mode: 'HTML',
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: '🌐 English',  callback_data: 'set_lang_en' },
+                        { text: '🇰🇭 ខ្មែរ',    callback_data: 'set_lang_km' },
+                    ]
+                ]
+            }
         }
-    });
+    );
 }
 
 module.exports = { handleStart };
