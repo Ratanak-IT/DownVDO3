@@ -5,8 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js",
-    "postinstall": "pip install --upgrade yt-dlp"
+    "dev": "nodemon index.js"
   },
   "keywords": [
     "telegram",
