@@ -9,6 +9,7 @@ const cleanup       = require('../services/cleanup');
 const buttons       = require('../utils/buttons');
 const progress      = require('../utils/progress');
 const { getUserLang, t } = require('../utils/lang');
+const admin = require('./admin');
 const messages      = require('../utils/messages');
 
 async function initiateAudioDownload(bot, chatId, userStates) {
@@ -121,6 +122,8 @@ async function handleAudioQuality(bot, query, userStates) {
 
         await progress.safeDeleteMessage(bot, chatId, progressMsg.message_id);
         await bot.sendMessage(chatId, t('download_success', lang), { parse_mode: 'HTML' });
+        admin.incAudio();
+        admin.incrementUserDownload(userId);
 
         if (audioPath && audioPath !== mp3Path && fs.existsSync(audioPath)) cleanup.scheduleDelete(audioPath);
         if (mp3Path && fs.existsSync(mp3Path)) cleanup.scheduleDelete(mp3Path);
@@ -149,6 +152,7 @@ async function handleAudioQuality(bot, query, userStates) {
         }
 
         await progress.safeEditMessage(bot, chatId, progressMsg.message_id, errMsg);
+        admin.incFailed();
 
         // Cleanup temp files
         if (audioPath && fs.existsSync(audioPath)) cleanup.scheduleDelete(audioPath);

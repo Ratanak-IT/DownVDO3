@@ -1,4 +1,5 @@
 const { getUserLang, t } = require('../utils/lang');
+const admin = require('./admin');
 /**
  * 🖼️ Thumbnail Handler
  * Manages YouTube thumbnail download flow

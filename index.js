@@ -1,15 +1,15 @@
 /**
  * 🎬 Telegram YouTube Downloader Bot
- * Main Entry Point — with English & Khmer support
+ * Main Entry Point
  */
 
 const TelegramBot = require('node-telegram-bot-api');
-const path = require('path');
-const fs   = require('fs');
+const path  = require('path');
+const fs    = require('fs');
 require('dotenv').config();
 
-const config       = require('./config/env');
-const { isOwner }  = require('./config/owner');
+const config      = require('./config/env');
+const { isOwner } = require('./config/owner');
 const { getUserLang, setUserLang, t } = require('./utils/lang');
 
 const startHandler     = require('./handlers/start');
@@ -20,23 +20,23 @@ const songHandler      = require('./handlers/song');
 const thumbnailHandler = require('./handlers/thumbnail');
 const settingsHandler  = require('./handlers/settings');
 const aboutHandler     = require('./handlers/about');
+const adminHandler     = require('./handlers/admin');
 const cleanupService   = require('./services/cleanup');
 const buttons          = require('./utils/buttons');
 
-// Ensure downloads directory exists
-const downloadsDir = path.resolve(config.DOWNLOAD_PATH);
-if (!fs.existsSync(downloadsDir)) {
-    fs.mkdirSync(downloadsDir, { recursive: true });
-    console.log('📁 Created downloads directory');
-}
+// Ensure folders exist
+['downloads', 'data'].forEach(dir => {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+});
 
 const bot        = new TelegramBot(config.BOT_TOKEN, { polling: true });
 const userStates = new Map();
-
-module.exports = { bot, userStates };
+module.exports   = { bot, userStates };
 
 // ── /start ─────────────────────────────────────────────────────────────────────
 bot.onText(/\/start/, (msg) => {
+    // Register user
+    adminHandler.registerUser(msg.from.id, msg.from.first_name, getUserLang(msg.from.id));
     startHandler.handleStart(bot, msg, userStates);
 });
 
@@ -48,6 +48,13 @@ bot.onText(/\/language/, (msg) => {
     });
 });
 
+// ── Admin Commands ─────────────────────────────────────────────────────────────
+bot.onText(/\/admin/,            (msg) => adminHandler.adminCommand(bot, msg));
+bot.onText(/\/users/,            (msg) => adminHandler.usersCommand(bot, msg));
+bot.onText(/\/message(.+)?/,     (msg) => adminHandler.messageCommand(bot, msg));
+bot.onText(/\/stats/,            (msg) => adminHandler.statsCommand(bot, msg));
+bot.onText(/\/cleardownloads/,   (msg) => adminHandler.clearDownloadsCommand(bot, msg));
+
 // ── Callback Query ─────────────────────────────────────────────────────────────
 bot.on('callback_query', async (query) => {
     const chatId = query.message.chat.id;
@@ -58,30 +65,31 @@ bot.on('callback_query', async (query) => {
     try {
         await bot.answerCallbackQuery(query.id);
 
-        // ── Language switching ────────────────────────────────────────────────
+        // ── Admin callbacks ────────────────────────────────────────────────────
+        if (data.startsWith('admin_')) {
+            await adminHandler.handleAdminCallback(bot, query);
+            return;
+        }
+
+        // ── Language ───────────────────────────────────────────────────────────
         if (data === 'set_lang_en') {
             setUserLang(userId, 'en');
+            adminHandler.registerUser(userId, query.from.first_name, 'en');
             await bot.editMessageText(t('language_set_en', 'en'), {
                 chat_id: chatId, message_id: query.message.message_id,
-                reply_markup: { inline_keyboard: [
-                    [{ text: '🏠 Main Menu', callback_data: 'main_menu' }]
-                ]}
+                reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'main_menu' }]] }
             });
             return;
         }
-
         if (data === 'set_lang_km') {
             setUserLang(userId, 'km');
+            adminHandler.registerUser(userId, query.from.first_name, 'km');
             await bot.editMessageText(t('language_set_km', 'km'), {
                 chat_id: chatId, message_id: query.message.message_id,
-                reply_markup: { inline_keyboard: [
-                    [{ text: '🏠 ម៉ឺនុយ', callback_data: 'main_menu' }]
-                ]}
+                reply_markup: { inline_keyboard: [[{ text: '🏠 ម៉ឺនុយ', callback_data: 'main_menu' }]] }
             });
             return;
         }
-
-        // ── Choose language screen ─────────────────────────────────────────────
         if (data === 'choose_language') {
             await bot.editMessageText(t('choose_language', lang), {
                 chat_id: chatId, message_id: query.message.message_id,
@@ -92,8 +100,7 @@ bot.on('callback_query', async (query) => {
 
         // ── Main menu ──────────────────────────────────────────────────────────
         if (data === 'main_menu') {
-            menuHandler.showMainMenu(bot, chatId, userId);
-            return;
+            menuHandler.showMainMenu(bot, chatId, userId); return;
         }
 
         // ── Video ──────────────────────────────────────────────────────────────
@@ -158,6 +165,9 @@ bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const state  = userStates.get(chatId);
     if (!state || !msg.text) return;
+
+    // Register user on any interaction
+    adminHandler.registerUser(msg.from.id, msg.from.first_name, getUserLang(msg.from.id));
 
     try {
         switch (state.action) {

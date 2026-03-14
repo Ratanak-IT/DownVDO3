@@ -1,4 +1,5 @@
 const { getUserLang, t } = require('../utils/lang');
+const admin = require('./admin');
 /**
  * 🔍 Song Handler
  * Manages song search by name flow

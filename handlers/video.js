@@ -8,6 +8,7 @@ const cleanup  = require('../services/cleanup');
 const buttons  = require('../utils/buttons');
 const progress = require('../utils/progress');
 const { getUserLang, t } = require('../utils/lang');
+const admin = require('./admin');
 const messages = require('../utils/messages');
 
 async function initiateVideoDownload(bot, chatId, userStates) {
@@ -113,6 +114,8 @@ async function handleQualitySelection(bot, query, userStates) {
 
         await progress.safeDeleteMessage(bot, chatId, progressMsg.message_id);
         await bot.sendMessage(chatId, t('download_success', lang), { parse_mode: 'HTML' });
+        admin.incVideo();
+        admin.incrementUserDownload(userId);
         cleanup.scheduleDelete(filePath);
         userStates.delete(chatId);
 
@@ -138,6 +141,7 @@ async function handleQualitySelection(bot, query, userStates) {
         }
 
         await progress.safeEditMessage(bot, chatId, progressMsg.message_id, errMsg);
+        admin.incFailed();
         userStates.delete(chatId);
     }
 }
