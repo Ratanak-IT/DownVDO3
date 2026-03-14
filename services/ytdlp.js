@@ -128,17 +128,24 @@ async function getVideoInfo(url) {
     const qualitySet = new Set();
 
     if (info.formats) {
-        const hasAudio = info.formats.some(f => f.acodec && f.acodec !== 'none');
+        info.formats.forEach(fmt => {
+            // Include format if it has video AND either:
+            // 1. Has its own audio (combined stream — common in TikTok)
+            // 2. There is a separate audio stream available (YouTube separate streams)
+            const hasVideo = fmt.height && fmt.vcodec && fmt.vcodec !== 'none';
+            const hasCombinedAudio = fmt.acodec && fmt.acodec !== 'none';
+            const hasSeparateAudio = info.formats.some(
+                f => f.acodec && f.acodec !== 'none' && (!f.vcodec || f.vcodec === 'none')
+            );
 
-        info.formats
-            .filter(f => f.height && f.vcodec && f.vcodec !== 'none')
-            .forEach(fmt => {
+            if (hasVideo && (hasCombinedAudio || hasSeparateAudio)) {
                 const quality = `${fmt.height}p`;
-                if (!qualitySet.has(quality) && hasAudio) {
+                if (!qualitySet.has(quality)) {
                     qualitySet.add(quality);
                     formats.push({ quality, height: fmt.height, formatId: fmt.format_id });
                 }
-            });
+            }
+        });
     }
 
     formats.sort((a, b) => a.height - b.height);
