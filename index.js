@@ -138,8 +138,6 @@ bot.on('callback_query', async (query) => {
             tiktokHandler.askTikTokUrl(bot, chatId, 'video', userStates);
         } else if (data === 'tiktok_mp3') {
             tiktokHandler.askTikTokUrl(bot, chatId, 'mp3', userStates);
-        } else if (data.startsWith('taq_')) {
-            tiktokHandler.handleTikTokMp3Quality(bot, query, userStates);
         }
 
         // ── Settings ───────────────────────────────────────────────────────────

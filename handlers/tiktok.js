@@ -1,6 +1,6 @@
 /**
  * 🎵 TikTok Handler
- * Video (no watermark) + MP3
+ * Video (auto download, no watermark) + MP3
  */
 
 const fs            = require('fs');
@@ -34,123 +34,107 @@ async function initiateTikTok(bot, chatId, userStates) {
 
 async function askTikTokUrl(bot, chatId, type, userStates) {
     const lang = getUserLang(chatId);
-    userStates.set(chatId, { action: type === 'video' ? 'awaiting_tiktok_video_url' : 'awaiting_tiktok_mp3_url' });
-    const key = type === 'video' ? 'ask_tiktok_video_url' : 'ask_tiktok_mp3_url';
+    const action = type === 'video' ? 'awaiting_tiktok_video_url' : 'awaiting_tiktok_mp3_url';
+    const key    = type === 'video' ? 'ask_tiktok_video_url'      : 'ask_tiktok_mp3_url';
+    userStates.set(chatId, { action });
     await bot.sendMessage(chatId, t(key, lang), {
         parse_mode: 'HTML',
         reply_markup: { inline_keyboard: buttons.getCancelButton(lang) }
     });
 }
 
-// ── Step 3a: Process TikTok Video URL ─────────────────────────────────────────
+// ── Step 3a: Process TikTok Video URL — AUTO DOWNLOAD, no quality prompt ───────
 
 async function processTikTokVideoUrl(bot, msg, userStates) {
     const chatId = msg.chat.id;
+    const userId = msg.from.id;
     const url    = msg.text.trim();
-    const lang   = getUserLang(msg.from.id);
+    const lang   = getUserLang(userId);
 
     if (!ytdlp.isValidTikTokUrl(url)) {
         await bot.sendMessage(chatId, t('invalid_tiktok_url', lang), { parse_mode: 'HTML' });
         return;
     }
 
-    const fetchingMsg = await bot.sendMessage(chatId, t('fetching_video', lang), { parse_mode: 'HTML' });
+    // Clear state right away — no quality selection step
+    userStates.delete(chatId);
+
+    const progressMsg = await bot.sendMessage(chatId, t('downloading_video', lang), { parse_mode: 'HTML' });
 
     try {
-        const videoInfo = await ytdlp.getVideoInfo(url);
-        await progress.safeDeleteMessage(bot, chatId, fetchingMsg.message_id);
+        // Skip getVideoInfo — download directly at best quality
+        const filePath = await ytdlp.downloadTikTokVideo(url, chatId);
 
-        userStates.set(chatId, { action: 'awaiting_tiktok_video_quality', videoInfo, url });
+        await progress.safeEditMessage(bot, chatId, progressMsg.message_id, t('uploading', lang));
 
-        const caption = `🎵 <b>TikTok</b>\n\n` + messages.getVideoInfo(videoInfo) + `\n\n${t('select_video_quality', lang)}`;
+        if (!fs.existsSync(filePath)) throw new Error('File not found on disk');
 
-        if (videoInfo.thumbnail) {
-            await bot.sendPhoto(chatId, videoInfo.thumbnail, {
-                caption, parse_mode: 'HTML',
-                reply_markup: { inline_keyboard: buttons.getTikTokVideoQualityButtons(videoInfo.formats, lang) }
-            });
-        } else {
-            await bot.sendMessage(chatId, caption, {
-                parse_mode: 'HTML',
-                reply_markup: { inline_keyboard: buttons.getTikTokVideoQualityButtons(videoInfo.formats, lang) }
-            });
+        const stats  = fs.statSync(filePath);
+        const sizeMB = stats.size / (1024 * 1024);
+
+        if (sizeMB > 49) {
+            fs.unlinkSync(filePath);
+            await progress.safeEditMessage(bot, chatId, progressMsg.message_id,
+                lang === 'km'
+                    ? `❌ ឯកសារធំពេក (${sizeMB.toFixed(1)}MB)។ Telegram អនុញ្ញាតតែ 50MB។`
+                    : `❌ File too large (${sizeMB.toFixed(1)}MB). Max 50MB.`
+            );
+            return;
         }
+
+        await bot.sendDocument(chatId, filePath, {
+            caption: `🎵 <b>TikTok Video</b>\n\n📦 Size: ${sizeMB.toFixed(1)}MB | 🚫 No Watermark`,
+            parse_mode: 'HTML'
+        });
+
+        await progress.safeDeleteMessage(bot, chatId, progressMsg.message_id);
+        await bot.sendMessage(chatId, t('download_success', lang), { parse_mode: 'HTML' });
+
+        admin.incVideo();
+        admin.incrementUserDownload(userId);
+        cleanup.scheduleDelete(filePath);
+
+        const menuHandler = require('./menu');
+        await menuHandler.showMainMenu(bot, chatId, userId);
+
     } catch (error) {
-        console.error('TikTok video info error:', error);
-        const errMsg = lang === 'km'
-            ? `❌ មិនអាចទាញព័ត៌មាន TikTok បានទេ: ${error.message || 'Unknown error'}`
-            : `❌ Could not fetch TikTok info: ${error.message || 'Unknown error'}`;
-        await progress.safeEditMessage(bot, chatId, fetchingMsg.message_id, errMsg);
-        userStates.delete(chatId);
+        console.error('TikTok video download error:', error);
+        await progress.safeEditMessage(bot, chatId, progressMsg.message_id,
+            lang === 'km'
+                ? `❌ Download បរាជ័យ: ${error.message || 'Unknown error'}`
+                : `❌ Download failed: ${error.message || 'Unknown error'}`
+        );
+        admin.incFailed();
     }
 }
 
-// ── Step 3b: Process TikTok MP3 URL ───────────────────────────────────────────
+// ── Step 3b: Process TikTok MP3 URL — AUTO DOWNLOAD 128kbps, no quality prompt ─
 
 async function processTikTokMp3Url(bot, msg, userStates) {
     const chatId = msg.chat.id;
+    const userId = msg.from.id;
     const url    = msg.text.trim();
-    const lang   = getUserLang(msg.from.id);
+    const lang   = getUserLang(userId);
 
     if (!ytdlp.isValidTikTokUrl(url)) {
         await bot.sendMessage(chatId, t('invalid_tiktok_url', lang), { parse_mode: 'HTML' });
         return;
     }
 
-    const fetchingMsg = await bot.sendMessage(chatId, t('fetching_audio', lang), { parse_mode: 'HTML' });
-
-    try {
-        const videoInfo = await ytdlp.getVideoInfo(url);
-        await progress.safeDeleteMessage(bot, chatId, fetchingMsg.message_id);
-
-        userStates.set(chatId, { action: 'awaiting_tiktok_mp3_quality', videoInfo, url });
-
-        const caption = `🎵 <b>TikTok</b>\n\n` + messages.getAudioInfo(videoInfo) + `\n\n${t('select_audio_quality', lang)}`;
-
-        if (videoInfo.thumbnail) {
-            await bot.sendPhoto(chatId, videoInfo.thumbnail, {
-                caption, parse_mode: 'HTML',
-                reply_markup: { inline_keyboard: buttons.getTikTokAudioQualityButtons(lang) }
-            });
-        } else {
-            await bot.sendMessage(chatId, caption, {
-                parse_mode: 'HTML',
-                reply_markup: { inline_keyboard: buttons.getTikTokAudioQualityButtons(lang) }
-            });
-        }
-    } catch (error) {
-        console.error('TikTok mp3 info error:', error);
-        const errMsg = lang === 'km'
-            ? `❌ មិនអាចទាញព័ត៌មាន TikTok បានទេ: ${error.message || 'Unknown error'}`
-            : `❌ Could not fetch TikTok info: ${error.message || 'Unknown error'}`;
-        await progress.safeEditMessage(bot, chatId, fetchingMsg.message_id, errMsg);
-        userStates.delete(chatId);
-    }
-}
-
-// ── Step 4b: Handle TikTok MP3 Quality ────────────────────────────────────────
-
-async function handleTikTokMp3Quality(bot, query, userStates) {
-    const chatId  = query.message.chat.id;
-    const userId  = query.from.id;
-    const bitrate = query.data.replace('taq_', '');
-    const state   = userStates.get(chatId);
-    const lang    = getUserLang(userId);
-
-    if (!state || !state.url) {
-        await bot.sendMessage(chatId, t('session_expired', lang)); return;
-    }
+    // Clear state — no quality selection needed
+    userStates.delete(chatId);
 
     const progressMsg = await bot.sendMessage(chatId, t('downloading_audio', lang), { parse_mode: 'HTML' });
     let audioPath = null;
     let mp3Path   = null;
 
     try {
-        audioPath = await ytdlp.downloadAudio(state.url, bitrate, chatId);
+        // Auto download best audio at 128kbps — skip getVideoInfo entirely
+        audioPath = await ytdlp.downloadAudio(url, '128', chatId);
         if (!audioPath || !fs.existsSync(audioPath)) throw new Error('Audio file not found after download');
 
         await progress.safeEditMessage(bot, chatId, progressMsg.message_id, t('processing', lang));
-        mp3Path = await ffmpegService.convertToMp3(audioPath, bitrate);
+        mp3Path = await ffmpegService.convertToMp3(audioPath, '128');
 
         await progress.safeEditMessage(bot, chatId, progressMsg.message_id, t('uploading', lang));
 
@@ -167,11 +151,13 @@ async function handleTikTokMp3Quality(bot, query, userStates) {
                     ? `❌ ឯកសារធំពេក (${sizeMB.toFixed(1)}MB)។ Telegram អនុញ្ញាតតែ 50MB។`
                     : `❌ File too large (${sizeMB.toFixed(1)}MB). Max 50MB.`
             );
-            userStates.delete(chatId); return;
+            return;
         }
 
         await bot.sendDocument(chatId, finalPath, {
-            caption: `🎵 TikTok: ${state.videoInfo.title}\n\n🎧 Bitrate: ${bitrate} kbps | 📦 Size: ${sizeMB.toFixed(1)}MB`,
+            caption: `🎵 <b>TikTok MP3</b>
+
+📦 Size: ${sizeMB.toFixed(1)}MB`,
             parse_mode: 'HTML'
         });
 
@@ -183,8 +169,6 @@ async function handleTikTokMp3Quality(bot, query, userStates) {
 
         if (audioPath && audioPath !== mp3Path && fs.existsSync(audioPath)) cleanup.scheduleDelete(audioPath);
         if (mp3Path && fs.existsSync(mp3Path)) cleanup.scheduleDelete(mp3Path);
-
-        userStates.delete(chatId);
 
         const menuHandler = require('./menu');
         await menuHandler.showMainMenu(bot, chatId, userId);
@@ -199,7 +183,6 @@ async function handleTikTokMp3Quality(bot, query, userStates) {
         admin.incFailed();
         if (audioPath && fs.existsSync(audioPath)) cleanup.scheduleDelete(audioPath);
         if (mp3Path   && fs.existsSync(mp3Path))   cleanup.scheduleDelete(mp3Path);
-        userStates.delete(chatId);
     }
 }
 
@@ -208,5 +191,4 @@ module.exports = {
     askTikTokUrl,
     processTikTokVideoUrl,
     processTikTokMp3Url,
-    handleTikTokMp3Quality,
 };
