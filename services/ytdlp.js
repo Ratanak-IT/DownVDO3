@@ -137,11 +137,11 @@ async function downloadVideo(url, quality, chatId) {
     const outputPath = path.join(config.DOWNLOAD_PATH, `video_${chatId}_${uid}.mp4`);
     const height     = parseInt(quality.replace('p', ''));
 
-    // Use --format-sort to prefer the requested height, then let yt-dlp
-    // pick the best available format automatically — avoids "format not available"
+    // Do NOT use -f with height filters — YouTube restricts formats on server IPs.
+    // Instead use --format-sort to prefer the requested height and let yt-dlp
+    // automatically pick the best actually-available format.
     await runYtDlp([
-        '--format-sort', `res:${height},ext:mp4:m4a`,
-        '-f', 'bestvideo+bestaudio/best',
+        '--format-sort', `res:${height},ext:mp4:m4a,+size`,
         '--merge-output-format', 'mp4',
         '-o', outputPath,
         '--no-warnings',
