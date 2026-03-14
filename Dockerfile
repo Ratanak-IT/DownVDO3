@@ -1,21 +1,25 @@
 # ── Base image ─────────────────────────────────────────────────────────────────
 FROM node:20-slim
 
-# Install yt-dlp and ffmpeg
+# Install ffmpeg, python3, curl, pip
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     python3 \
+    python3-pip \
     curl \
-    && curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
-       -o /usr/local/bin/yt-dlp \
-    && chmod a+rx /usr/local/bin/yt-dlp \
-    && apt-get clean \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# Install yt-dlp via pip (most reliable method)
+RUN pip3 install -U yt-dlp --break-system-packages
+
+# Verify installations
+RUN yt-dlp --version && ffmpeg -version | head -1
 
 # Working directory
 WORKDIR /app
 
-# Install dependencies
+# Install Node dependencies
 COPY package*.json ./
 RUN npm install --production
 
