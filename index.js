@@ -1,5 +1,5 @@
 /**
- * 🎬 Telegram YouTube Downloader Bot
+ * 🎬 Telegram YouTube + TikTok Downloader Bot
  * Main Entry Point
  */
 
@@ -8,8 +8,8 @@ const path  = require('path');
 const fs    = require('fs');
 require('dotenv').config();
 
-const config      = require('./config/env');
-const { isOwner } = require('./config/owner');
+const config         = require('./config/env');
+const { isOwner }    = require('./config/owner');
 const { getUserLang, setUserLang, t } = require('./utils/lang');
 
 const startHandler     = require('./handlers/start');
@@ -21,6 +21,7 @@ const thumbnailHandler = require('./handlers/thumbnail');
 const settingsHandler  = require('./handlers/settings');
 const aboutHandler     = require('./handlers/about');
 const adminHandler     = require('./handlers/admin');
+const tiktokHandler    = require('./handlers/tiktok');
 const cleanupService   = require('./services/cleanup');
 const buttons          = require('./utils/buttons');
 
@@ -35,7 +36,6 @@ module.exports   = { bot, userStates };
 
 // ── /start ─────────────────────────────────────────────────────────────────────
 bot.onText(/\/start/, (msg) => {
-    // Register user
     adminHandler.registerUser(msg.from.id, msg.from.first_name, getUserLang(msg.from.id));
     startHandler.handleStart(bot, msg, userStates);
 });
@@ -49,11 +49,11 @@ bot.onText(/\/language/, (msg) => {
 });
 
 // ── Admin Commands ─────────────────────────────────────────────────────────────
-bot.onText(/\/admin/,            (msg) => adminHandler.adminCommand(bot, msg));
-bot.onText(/\/users/,            (msg) => adminHandler.usersCommand(bot, msg));
-bot.onText(/\/message(.+)?/,     (msg) => adminHandler.messageCommand(bot, msg));
-bot.onText(/\/stats/,            (msg) => adminHandler.statsCommand(bot, msg));
-bot.onText(/\/cleardownloads/,   (msg) => adminHandler.clearDownloadsCommand(bot, msg));
+bot.onText(/\/admin/,          (msg) => adminHandler.adminCommand(bot, msg));
+bot.onText(/\/users/,          (msg) => adminHandler.usersCommand(bot, msg));
+bot.onText(/\/message(.+)?/,   (msg) => adminHandler.messageCommand(bot, msg));
+bot.onText(/\/stats/,          (msg) => adminHandler.statsCommand(bot, msg));
+bot.onText(/\/cleardownloads/, (msg) => adminHandler.clearDownloadsCommand(bot, msg));
 
 // ── Callback Query ─────────────────────────────────────────────────────────────
 bot.on('callback_query', async (query) => {
@@ -65,10 +65,9 @@ bot.on('callback_query', async (query) => {
     try {
         await bot.answerCallbackQuery(query.id);
 
-        // ── Admin callbacks ────────────────────────────────────────────────────
+        // ── Admin ──────────────────────────────────────────────────────────────
         if (data.startsWith('admin_')) {
-            await adminHandler.handleAdminCallback(bot, query);
-            return;
+            await adminHandler.handleAdminCallback(bot, query); return;
         }
 
         // ── Language ───────────────────────────────────────────────────────────
@@ -78,8 +77,7 @@ bot.on('callback_query', async (query) => {
             await bot.editMessageText(t('language_set_en', 'en'), {
                 chat_id: chatId, message_id: query.message.message_id,
                 reply_markup: { inline_keyboard: [[{ text: '🏠 Main Menu', callback_data: 'main_menu' }]] }
-            });
-            return;
+            }); return;
         }
         if (data === 'set_lang_km') {
             setUserLang(userId, 'km');
@@ -87,15 +85,13 @@ bot.on('callback_query', async (query) => {
             await bot.editMessageText(t('language_set_km', 'km'), {
                 chat_id: chatId, message_id: query.message.message_id,
                 reply_markup: { inline_keyboard: [[{ text: '🏠 ម៉ឺនុយ', callback_data: 'main_menu' }]] }
-            });
-            return;
+            }); return;
         }
         if (data === 'choose_language') {
             await bot.editMessageText(t('choose_language', lang), {
                 chat_id: chatId, message_id: query.message.message_id,
                 reply_markup: { inline_keyboard: buttons.getLanguageButtons() }
-            });
-            return;
+            }); return;
         }
 
         // ── Main menu ──────────────────────────────────────────────────────────
@@ -103,21 +99,21 @@ bot.on('callback_query', async (query) => {
             menuHandler.showMainMenu(bot, chatId, userId); return;
         }
 
-        // ── Video ──────────────────────────────────────────────────────────────
+        // ── YouTube Video ──────────────────────────────────────────────────────
         if (data === 'video_download') {
             videoHandler.initiateVideoDownload(bot, chatId, userStates);
         } else if (data.startsWith('vq_')) {
             videoHandler.handleQualitySelection(bot, query, userStates);
         }
 
-        // ── Audio ──────────────────────────────────────────────────────────────
+        // ── YouTube Audio ──────────────────────────────────────────────────────
         else if (data === 'audio_download') {
             audioHandler.initiateAudioDownload(bot, chatId, userStates);
         } else if (data.startsWith('aq_')) {
             audioHandler.handleAudioQuality(bot, query, userStates);
         }
 
-        // ── Song ───────────────────────────────────────────────────────────────
+        // ── Song Search ────────────────────────────────────────────────────────
         else if (data === 'song_search') {
             songHandler.initiateSongSearch(bot, chatId, userStates);
         } else if (data.startsWith('song_')) {
@@ -135,7 +131,20 @@ bot.on('callback_query', async (query) => {
             thumbnailHandler.handleThumbnailQuality(bot, query, userStates);
         }
 
-        // ── Settings (owner only) ──────────────────────────────────────────────
+        // ── TikTok ─────────────────────────────────────────────────────────────
+        else if (data === 'tiktok') {
+            tiktokHandler.initiateTikTok(bot, chatId, userStates);
+        } else if (data === 'tiktok_video') {
+            tiktokHandler.askTikTokUrl(bot, chatId, 'video', userStates);
+        } else if (data === 'tiktok_mp3') {
+            tiktokHandler.askTikTokUrl(bot, chatId, 'mp3', userStates);
+        } else if (data.startsWith('tvq_')) {
+            tiktokHandler.handleTikTokVideoQuality(bot, query, userStates);
+        } else if (data.startsWith('taq_')) {
+            tiktokHandler.handleTikTokMp3Quality(bot, query, userStates);
+        }
+
+        // ── Settings ───────────────────────────────────────────────────────────
         else if (data === 'settings') {
             if (isOwner(userId)) settingsHandler.showSettings(bot, chatId, lang);
         } else if (data.startsWith('autodelete_')) {
@@ -166,11 +175,11 @@ bot.on('message', async (msg) => {
     const state  = userStates.get(chatId);
     if (!state || !msg.text) return;
 
-    // Register user on any interaction
     adminHandler.registerUser(msg.from.id, msg.from.first_name, getUserLang(msg.from.id));
 
     try {
         switch (state.action) {
+            // YouTube
             case 'awaiting_video_url':
                 videoHandler.processVideoUrl(bot, msg, userStates); break;
             case 'awaiting_audio_url':
@@ -179,21 +188,25 @@ bot.on('message', async (msg) => {
                 songHandler.processSongSearch(bot, msg, userStates); break;
             case 'awaiting_thumbnail_url':
                 thumbnailHandler.processThumbnailUrl(bot, msg, userStates); break;
+            // TikTok
+            case 'awaiting_tiktok_video_url':
+                tiktokHandler.processTikTokVideoUrl(bot, msg, userStates); break;
+            case 'awaiting_tiktok_mp3_url':
+                tiktokHandler.processTikTokMp3Url(bot, msg, userStates); break;
         }
     } catch (error) {
         console.error('Message handler error:', error);
-        const lang = getUserLang(msg.from.id);
-        bot.sendMessage(chatId, t('error_generic', lang));
+        bot.sendMessage(chatId, t('error_generic', getUserLang(msg.from.id)));
     }
 });
 
 cleanupService.startCleanupScheduler();
 
 console.log('');
-console.log('╔════════════════════════════════════════╗');
-console.log('║  🎬 YouTube Downloader Bot Started!    ║');
-console.log('║  ✅ Bot is running and ready...        ║');
-console.log('╚════════════════════════════════════════╝');
+console.log('╔════════════════════════════════════════════╗');
+console.log('║  🎬 YouTube + TikTok Downloader Bot        ║');
+console.log('║  ✅ Bot is running and ready...            ║');
+console.log('╚════════════════════════════════════════════╝');
 console.log('');
 
 process.on('SIGINT',  () => { bot.stopPolling(); process.exit(0); });

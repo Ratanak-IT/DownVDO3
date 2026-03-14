@@ -128,17 +128,23 @@ async function getVideoInfo(url) {
     const qualitySet = new Set();
 
     if (info.formats) {
-        info.formats.forEach(fmt => {
-            // Include format if it has video AND either:
-            // 1. Has its own audio (combined stream — common in TikTok)
-            // 2. There is a separate audio stream available (YouTube separate streams)
-            const hasVideo = fmt.height && fmt.vcodec && fmt.vcodec !== 'none';
-            const hasCombinedAudio = fmt.acodec && fmt.acodec !== 'none';
-            const hasSeparateAudio = info.formats.some(
-                f => f.acodec && f.acodec !== 'none' && (!f.vcodec || f.vcodec === 'none')
-            );
+        // Pre-check: does this video have any downloadable audio at all?
+        // YouTube: has audio-only streams (vcodec = 'none', acodec = something)
+        // TikTok:  has combined streams (both vcodec and acodec set)
+        const hasSeparateAudio = info.formats.some(
+            f => f.acodec && f.acodec !== 'none' && f.vcodec === 'none'
+        );
 
-            if (hasVideo && (hasCombinedAudio || hasSeparateAudio)) {
+        info.formats.forEach(fmt => {
+            // Must have video
+            if (!fmt.height || !fmt.vcodec || fmt.vcodec === 'none') return;
+
+            const hasCombinedAudio = fmt.acodec && fmt.acodec !== 'none';
+
+            // Show quality button if:
+            // - Format is combined (TikTok style: video+audio in one stream), OR
+            // - There is a separate audio stream to merge with (YouTube style)
+            if (hasCombinedAudio || hasSeparateAudio) {
                 const quality = `${fmt.height}p`;
                 if (!qualitySet.has(quality)) {
                     qualitySet.add(quality);
@@ -171,13 +177,15 @@ async function downloadVideo(url, quality, chatId) {
     const height     = parseInt(quality.replace('p', ''));
 
     if (platform === 'tiktok') {
-        // TikTok: no format restrictions needed, just get best quality
+        // TikTok no-watermark: use h264 format which has no watermark burned in
+        // --no-check-certificates handles some TikTok region issues
         await runYtDlp([
-            '--format-sort', `res:${height},ext:mp4`,
+            '--format-sort', `res:${height},ext:mp4,+codec:h264`,
             '--merge-output-format', 'mp4',
             '-o', outputPath,
             '--no-warnings',
             '--no-playlist',
+            '--no-check-certificates',
             url,
         ], 'tiktok');
     } else {
