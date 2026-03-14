@@ -1,62 +1,81 @@
-/**
- * 🔧 yt-dlp Service
- * Handles all YouTube download operations
- *
- * On Railway/Linux: uses system yt-dlp installed via pip (always up-to-date)
- * On Windows/local: falls back to yt-dlp-exec bundled binary
- */
 
-const { execSync } = require('child_process');
-
-// Prefer system yt-dlp (Railway has this via pip install in Dockerfile).
-// Fall back to the npm-bundled binary for local Windows dev.
-function resolveYtDlp() {
-    try {
-        execSync('yt-dlp --version', { stdio: 'ignore' });
-        // System binary works — create a wrapper that calls it
-        const { create } = require('yt-dlp-exec');
-        return create('yt-dlp');
-    } catch {
-        // System binary not found — use bundled binary (works on Windows)
-        return require('yt-dlp-exec');
-    }
-}
-
-const ytDlp = resolveYtDlp();
-const path  = require('path');
-const fs    = require('fs');
+const { spawnSync, spawn } = require('child_process');
+const path   = require('path');
+const fs     = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const config = require('../config/env');
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
-
-/**
- * Build shared base flags (cookies, no-warnings, no-playlist)
- */
-function baseFlags() {
-    const flags = {};
-    if (fs.existsSync(config.COOKIE_PATH)) {
-        flags.cookies = config.COOKIE_PATH;
+// ── Find yt-dlp binary ─────────────────────────────────────────────────────────
+// On Railway: system binary from pip  → 'yt-dlp'
+// On Windows local: yt-dlp-exec bundled binary
+function getYtDlpBin() {
+    const test = spawnSync('yt-dlp', ['--version'], { encoding: 'utf8' });
+    if (test.status === 0) {
+        console.log('✅ Using system yt-dlp:', test.stdout.trim());
+        return 'yt-dlp';
     }
-    return flags;
+    // Fallback: use the binary bundled with yt-dlp-exec npm package
+    try {
+        const binPath = require('yt-dlp-exec').raw;
+        console.log('✅ Using yt-dlp-exec binary:', binPath);
+        return binPath;
+    } catch {
+        console.warn('⚠️  yt-dlp not found via system or npm, using "yt-dlp" and hoping for the best');
+        return 'yt-dlp';
+    }
 }
 
-/**
- * Ensure the downloads directory exists
- */
+const YT_DLP_BIN = getYtDlpBin();
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+function getCookieArgs() {
+    if (fs.existsSync(config.COOKIE_PATH)) {
+        return ['--cookies', config.COOKIE_PATH];
+    }
+    return [];
+}
+
 function ensureDownloadsDir() {
     if (!fs.existsSync(config.DOWNLOAD_PATH)) {
         fs.mkdirSync(config.DOWNLOAD_PATH, { recursive: true });
     }
 }
 
+/**
+ * Run yt-dlp with given args, return stdout as string
+ * @param {string[]} args
+ * @returns {Promise<string>}
+ */
+function runYtDlp(args) {
+    return new Promise((resolve, reject) => {
+        const fullArgs = [...args, ...getCookieArgs()];
+        console.log('▶ yt-dlp', fullArgs.join(' '));
+
+        const proc = spawn(YT_DLP_BIN, fullArgs);
+        let stdout = '';
+        let stderr = '';
+
+        proc.stdout.on('data', d => { stdout += d.toString(); });
+        proc.stderr.on('data', d => { stderr += d.toString(); });
+
+        proc.on('error', err => {
+            reject(new Error(`Failed to start yt-dlp: ${err.message}`));
+        });
+
+        proc.on('close', code => {
+            if (code !== 0) {
+                // Surface the real yt-dlp error message
+                reject(new Error(stderr.trim() || `yt-dlp exited with code ${code}`));
+                return;
+            }
+            resolve(stdout);
+        });
+    });
+}
+
 // ── URL validation ─────────────────────────────────────────────────────────────
 
-/**
- * Check if URL is a valid YouTube URL
- * @param {string} url
- * @returns {boolean}
- */
 function isValidYouTubeUrl(url) {
     const patterns = [
         /^(https?:\/\/)?(www\.)?youtube\.com\/watch\?v=[\w-]+/,
@@ -68,11 +87,6 @@ function isValidYouTubeUrl(url) {
     return patterns.some(p => p.test(url));
 }
 
-/**
- * Extract video ID from YouTube URL
- * @param {string} url
- * @returns {string|null}
- */
 function extractVideoId(url) {
     const match = url.match(
         /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/
@@ -82,20 +96,16 @@ function extractVideoId(url) {
 
 // ── Core functions ─────────────────────────────────────────────────────────────
 
-/**
- * Get video information
- * @param {string} url
- * @returns {Promise<Object>}
- */
 async function getVideoInfo(url) {
-    const info = await ytDlp(url, {
-        dumpJson:   true,
-        noWarnings: true,
-        noPlaylist: true,
-        ...baseFlags(),
-    });
+    const stdout = await runYtDlp([
+        '--dump-json',
+        '--no-warnings',
+        '--no-playlist',
+        url,
+    ]);
 
-    // Extract available video qualities
+    const info = JSON.parse(stdout);
+
     const formats    = [];
     const qualitySet = new Set();
 
@@ -124,31 +134,22 @@ async function getVideoInfo(url) {
     };
 }
 
-/**
- * Download video with specified quality
- * @param {string} url
- * @param {string} quality  e.g. "720p"
- * @param {number} chatId
- * @returns {Promise<string>} Absolute file path
- */
 async function downloadVideo(url, quality, chatId) {
     ensureDownloadsDir();
 
     const uid        = uuidv4();
-    const fileName   = `video_${chatId}_${uid}.mp4`;
-    const outputPath = path.join(config.DOWNLOAD_PATH, fileName);
+    const outputPath = path.join(config.DOWNLOAD_PATH, `video_${chatId}_${uid}.mp4`);
     const height     = parseInt(quality.replace('p', ''));
 
-    await ytDlp(url, {
-        format:            `bestvideo[height<=${height}]+bestaudio/best[height<=${height}]`,
-        mergeOutputFormat: 'mp4',
-        output:            outputPath,
-        noWarnings:        true,
-        noPlaylist:        true,
-        ...baseFlags(),
-    });
+    await runYtDlp([
+        '-f', `bestvideo[height<=${height}]+bestaudio/best[height<=${height}]`,
+        '--merge-output-format', 'mp4',
+        '-o', outputPath,
+        '--no-warnings',
+        '--no-playlist',
+        url,
+    ]);
 
-    // yt-dlp may append the real extension — find the file
     const files = fs.readdirSync(config.DOWNLOAD_PATH);
     const match = files.find(f => f.startsWith(`video_${chatId}_${uid}`));
     if (match) return path.join(config.DOWNLOAD_PATH, match);
@@ -156,29 +157,22 @@ async function downloadVideo(url, quality, chatId) {
     throw new Error('Downloaded video file not found on disk');
 }
 
-/**
- * Download audio as MP3
- * @param {string} url
- * @param {string} bitrate  e.g. "128"
- * @param {number} chatId
- * @returns {Promise<string>} Absolute file path
- */
 async function downloadAudio(url, bitrate, chatId) {
     ensureDownloadsDir();
 
     const uid            = uuidv4();
     const outputTemplate = path.join(config.DOWNLOAD_PATH, `audio_${chatId}_${uid}.%(ext)s`);
 
-    await ytDlp(url, {
-        format:        'bestaudio/best',
-        extractAudio:  true,
-        audioFormat:   'mp3',
-        audioQuality:  `${bitrate}K`,
-        output:        outputTemplate,
-        noWarnings:    true,
-        noPlaylist:    true,
-        ...baseFlags(),
-    });
+    await runYtDlp([
+        '-f', 'bestaudio/best',
+        '-x',
+        '--audio-format', 'mp3',
+        '--audio-quality', `${bitrate}K`,
+        '-o', outputTemplate,
+        '--no-warnings',
+        '--no-playlist',
+        url,
+    ]);
 
     const files = fs.readdirSync(config.DOWNLOAD_PATH);
     const match = files.find(f => f.startsWith(`audio_${chatId}_${uid}`));
@@ -186,33 +180,29 @@ async function downloadAudio(url, bitrate, chatId) {
     throw new Error('Downloaded audio file not found on disk');
 }
 
-/**
- * Search YouTube for videos
- * @param {string} query
- * @param {number} limit
- * @returns {Promise<Array>}
- */
 async function searchYouTube(query, limit = 10) {
-    const raw = await ytDlp(`ytsearch${limit}:${query}`, {
-        dumpJson:     true,
-        flatPlaylist: true,
-        noWarnings:   true,
-        ...baseFlags(),
-    });
+    const stdout = await runYtDlp([
+        `ytsearch${limit}:${query}`,
+        '--dump-json',
+        '--flat-playlist',
+        '--no-warnings',
+    ]);
 
-    // yt-dlp-exec returns a single object for flat-playlist searches
-    // It may return one object or an array depending on version — normalise both
-    const items  = Array.isArray(raw) ? raw : [raw];
     const results = [];
+    const lines   = stdout.trim().split('\n');
 
-    items.forEach((item, index) => {
-        if (!item || !item.id) return;
-        results.push({
-            title:    item.title    || 'Unknown',
-            url:      item.url      || `https://www.youtube.com/watch?v=${item.id}`,
-            duration: item.duration || 0,
-            index,
-        });
+    lines.forEach((line, index) => {
+        if (!line.trim()) return;
+        try {
+            const item = JSON.parse(line);
+            if (!item.id) return;
+            results.push({
+                title:    item.title    || 'Unknown',
+                url:      item.url      || `https://www.youtube.com/watch?v=${item.id}`,
+                duration: item.duration || 0,
+                index,
+            });
+        } catch { /* skip bad lines */ }
     });
 
     return results;
